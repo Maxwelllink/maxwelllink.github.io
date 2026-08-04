@@ -1,0 +1,2030 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Watermaster</title>
+    <style>
+        /* --- ЦВЕТОВЫЕ ПАЛИТРЫ (ТЕМЫ) --- */
+        :root {
+            --bg-color: #f5f5f7;
+            --surface-color: #ffffff;
+            --text-color: #1d1d1f;
+            --accent-color: #0071e3;
+            --border-color: #e5e5ea;
+            --safe-area-bottom: env(safe-area-inset-bottom, 0px);
+        }
+
+        [data-theme="dark"] {
+            --bg-color: #1c1c1e;
+            --surface-color: #2c2c2e;
+            --text-color: #f5f5f7;
+            --accent-color: #0a84ff;
+            --border-color: #38383a;
+        }
+
+        [data-theme="amoled"] {
+            --bg-color: #000000;
+            --surface-color: #121212;
+            --text-color: #ffffff;
+            --accent-color: #0a84ff;
+            --border-color: #222222;
+        }
+
+        /* Цветовые вариации */
+        [data-theme="red-light"] { --bg-color: #fff5f5; --surface-color: #ffffff; --text-color: #2c0e0e; --accent-color: #ff3b30; --border-color: #ffe0e0; }
+        [data-theme="red-dark"] { --bg-color: #1a0505; --surface-color: #2c0e0e; --text-color: #ffcccc; --accent-color: #ff453a; --border-color: #3d1414; }
+        [data-theme="orange-light"] { --bg-color: #fff9f5; --surface-color: #ffffff; --text-color: #2c1405; --accent-color: #ff9500; --border-color: #ffe9dc; }
+        [data-theme="orange-dark"] { --bg-color: #1a0f05; --surface-color: #2c1a0e; --text-color: #ffe2cc; --accent-color: #ff9f0a; --border-color: #3d2414; }
+        [data-theme="yellow-light"] { --bg-color: #fffdf0; --surface-color: #ffffff; --text-color: #2c2505; --accent-color: #ffcc00; --border-color: #fff9cc; }
+        [data-theme="yellow-dark"] { --bg-color: #1a1705; --surface-color: #2c270e; --text-color: #fff5cc; --accent-color: #ffd60a; --border-color: #3d3714; }
+        [data-theme="green-light"] { --bg-color: #f5fbf7; --surface-color: #ffffff; --text-color: #092c14; --accent-color: #34c759; --border-color: #e2f6e9; }
+        [data-theme="green-dark"] { --bg-color: #051a0b; --surface-color: #0e2c14; --text-color: #ccf2d7; --accent-color: #30d158; --border-color: #143d1d; }
+        [data-theme="light-blue-light"] { --bg-color: #f4faff; --surface-color: #ffffff; --text-color: #05203d; --accent-color: #32ade6; --border-color: #e1f5ff; }
+        [data-theme="light-blue-dark"] { --bg-color: #05131a; --surface-color: #0e222c; --text-color: #ccf0ff; --accent-color: #64d2ff; --border-color: #14313d; }
+        [data-theme="blue-light"] { --bg-color: #f4f9ff; --surface-color: #ffffff; --text-color: #051a30; --accent-color: #007aff; --border-color: #e1f0ff; }
+        [data-theme="blue-dark"] { --bg-color: #050f1a; --surface-color: #0e192c; --text-color: #cce3ff; --accent-color: #0a84ff; --border-color: #14243d; }
+        [data-theme="purple-light"] { --bg-color: #fbf5fc; --surface-color: #ffffff; --text-color: #24052c; --accent-color: #af52de; --border-color: #f5e2fa; }
+        [data-theme="purple-dark"] { --bg-color: #14051a; --surface-color: #210e2c; --text-color: #f0ccff; --accent-color: #bf5af2; --border-color: #30143d; }
+        [data-theme="pink-light"] { --bg-color: #fcf4f7; --surface-color: #ffffff; --text-color: #2c0514; --accent-color: #ff2d55; --border-color: #faf0f3; }
+        [data-theme="pink-dark"] { --bg-color: #1a050d; --surface-color: #2c0e19; --text-color: #ffccd7; --accent-color: #ff375f; --border-color: #3d1421; }
+
+        /* --- БАЗОВЫЕ СТИЛИ ДЛЯ МОБИЛЬНЫХ --- */
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            -webkit-tap-highlight-color: transparent;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+
+        body, html {
+            width: 100%;
+            height: 100%;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            overflow: hidden;
+            transition: background-color 0.3s, color 0.3s;
+        }
+
+        .screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: none;
+            flex-direction: column;
+            padding: 20px;
+            padding-bottom: calc(20px + var(--safe-area-bottom));
+            overflow-y: auto;
+        }
+
+        .screen.active {
+            display: flex;
+        }
+
+        .screen-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 20px;
+            padding-top: env(safe-area-inset-top, 0px);
+            flex-shrink: 0;
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+        }
+
+        .back-btn {
+            background: none;
+            border: none;
+            color: var(--accent-color);
+            font-size: 18px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            margin-right: 15px;
+        }
+
+        /* --- ГЛАВНОЕ МЕНЮ --- */
+        #menu-screen {
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+        }
+
+        .app-title {
+            font-size: 42px;
+            font-weight: 800;
+            margin-bottom: 10px;
+            letter-spacing: -1px;
+            background: linear-gradient(135deg, var(--accent-color), #5856d6);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .app-subtitle {
+            font-size: 16px;
+            opacity: 0.6;
+            margin-bottom: 50px;
+        }
+
+        .menu-grid {
+            width: 100%;
+            max-width: 340px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .btn {
+            padding: 14px 20px;
+            font-size: 16px;
+            font-weight: 600;
+            border-radius: 14px;
+            border: none;
+            background-color: var(--surface-color);
+            color: var(--text-color);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+            cursor: pointer;
+            transition: transform 0.1s, background-color 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+        }
+
+        .btn:active {
+            transform: scale(0.97);
+            opacity: 0.9;
+        }
+
+        .btn-primary {
+            background-color: var(--accent-color);
+            color: #ffffff;
+            box-shadow: 0 4px 16px rgba(0, 113, 227, 0.3);
+        }
+
+        .btn-secondary {
+            background-color: var(--border-color);
+            color: var(--text-color);
+        }
+
+        .btn-sm {
+            padding: 8px 14px;
+            font-size: 14px;
+            border-radius: 10px;
+        }
+
+        /* --- ЭКРАН СОЗДАНИЯ / НАЛОЖЕНИЯ --- */
+        #create-screen, #apply-screen {
+            padding: 15px;
+            overflow: hidden;
+            justify-content: space-between;
+            position: relative;
+        }
+
+        .canvas-container {
+            width: 100%;
+            max-width: 380px;
+            aspect-ratio: 1 / 1;
+            margin: 0 auto;
+            background-image: linear-gradient(45deg, #ccc 25%, transparent 25%), 
+                              linear-gradient(-45deg, #ccc 25%, transparent 25%), 
+                              linear-gradient(45deg, transparent 75%, #ccc 75%), 
+                              linear-gradient(-45deg, transparent 75%, #ccc 75%);
+            background-size: 20px 20px;
+            background-position: 0 0, 0 10px, 10px -10px, -10px 0;
+            background-color: #f0f0f0;
+            border-radius: 12px;
+            border: 2px solid var(--border-color);
+            position: relative;
+            box-shadow: inset 0 0 20px rgba(0,0,0,0.1);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+
+        /* Apply-холст управляется через JS, flex не нужен */
+        #apply-canvas-holder {
+            display: block;
+        }
+
+        #watermark-canvas {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+            display: block;
+            border-radius: 10px;
+        }
+
+        #apply-canvas {
+            display: block;
+            border-radius: 6px;
+            /* Размер управляется через JS (style.width/height) */
+        }
+
+        #apply-canvas-viewport {
+            position: absolute;
+            top: 0;
+            left: 0;
+            transform-origin: 0 0;
+            will-change: transform;
+        }
+
+        .editor-controls {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-end;
+            gap: 10px;
+            margin-top: 10px;
+            width: 100%;
+            max-width: 380px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        .toolbar-row {
+            display: flex;
+            gap: 8px;
+            width: 100%;
+        }
+
+        .toolbar-row .btn {
+            flex: 1;
+        }
+
+        .properties-panel {
+            background-color: var(--surface-color);
+            border-radius: 16px;
+            padding: 12px;
+            box-shadow: 0 -4px 16px rgba(0,0,0,0.08);
+            display: none;
+            flex-direction: column;
+            gap: 8px;
+            max-height: 240px;
+            overflow-y: auto;
+        }
+
+        .prop-slider-group {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+        }
+
+        .prop-slider-group label {
+            font-size: 13px;
+            font-weight: 600;
+            width: 85px;
+            flex-shrink: 0;
+        }
+
+        .prop-slider-group input[type="range"] {
+            flex: 1;
+            height: 6px;
+            border-radius: 3px;
+            outline: none;
+            accent-color: var(--accent-color);
+        }
+
+        .prop-value {
+            font-size: 12px;
+            font-weight: 700;
+            width: 42px;
+            text-align: right;
+            opacity: 0.8;
+            font-family: monospace;
+        }
+
+        /* Блокировщик интерфейса при сохранении */
+        .screen-blocker {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.15);
+            backdrop-filter: blur(2px);
+            z-index: 10;
+            display: none;
+        }
+
+        /* Шторка сохранения и листов */
+        .save-modal-sheet {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            background-color: var(--surface-color);
+            border-radius: 24px 24px 0 0;
+            padding: 24px 20px calc(24px + var(--safe-area-bottom)) 20px;
+            box-shadow: 0 -8px 32px rgba(0,0,0,0.15);
+            z-index: 20;
+            transform: translateY(100%);
+            transition: transform 0.3s cubic-bezier(0.1, 0.76, 0.55, 0.94);
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            max-height: 80%;
+            overflow-y: auto;
+        }
+
+        .save-modal-sheet.open {
+            transform: translateY(0);
+        }
+
+        .save-modal-title {
+            font-size: 18px;
+            font-weight: 700;
+            text-align: center;
+        }
+
+        /* --- СТИЛИ ДЛЯ НАСТРОЕК --- */
+        .settings-group {
+            background-color: var(--surface-color);
+            border-radius: 16px;
+            padding: 8px 16px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.02);
+        }
+
+        .settings-row {
+            display: flex;
+            flex-direction: column;
+            padding: 12px 0;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .settings-row:last-child {
+            border-bottom: none;
+        }
+
+        .settings-label {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 6px;
+        }
+
+        .settings-desc {
+            font-size: 13px;
+            opacity: 0.5;
+            margin-bottom: 8px;
+            line-height: 1.4;
+        }
+
+        .warning-text {
+            color: #ff3b30;
+            font-weight: 500;
+        }
+
+        select, input[type="text"] {
+            width: 100%;
+            padding: 12px;
+            border-radius: 10px;
+            border: 1px solid var(--border-color);
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            font-size: 15px;
+            outline: none;
+        }
+
+        .placeholder-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            opacity: 0.7;
+            font-size: 16px;
+            text-align: center;
+            padding: 20px;
+            gap: 20px;
+        }
+
+        /* --- КАРУСЕЛЬ МИНИАТЮР --- */
+        .thumb-carousel {
+            display: flex;
+            gap: 10px;
+            overflow-x: auto;
+            width: 100%;
+            max-width: 380px;
+            margin: 0 auto 10px auto;
+            padding: 4px;
+            scrollbar-width: none;
+        }
+        .thumb-carousel::-webkit-scrollbar {
+            display: none;
+        }
+        .thumb-item {
+            width: 60px;
+            height: 60px;
+            border-radius: 8px;
+            object-fit: cover;
+            border: 2px solid transparent;
+            cursor: pointer;
+            flex-shrink: 0;
+            opacity: 0.5;
+            transition: all 0.2s;
+        }
+        .thumb-item.active {
+            border-color: var(--accent-color);
+            opacity: 1;
+            transform: scale(1.05);
+        }
+
+        /* Списки в листах шторки */
+        .list-item-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px;
+            background-color: var(--bg-color);
+            border-radius: 10px;
+            margin-bottom: 8px;
+        }
+        .list-item-actions {
+            display: flex;
+            gap: 8px;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="menu-screen" class="screen active">
+        <h1 class="app-title">Watermaster</h1>
+        <p class="app-subtitle" id="loc-subtitle">Пакетное наложение водяных знаков</p>
+
+        <div class="menu-grid">
+            <button class="btn btn-primary" onclick="navigateToCreateScreen()">
+                <span>➕</span> <span id="loc-btn-create">Создать водяной знак</span>
+            </button>
+            <button class="btn" onclick="navigateToApplyScreen()">
+                <span>🖼️</span> <span id="loc-btn-apply">Наложить водяной знак</span>
+            </button>
+            <button class="btn" onclick="navigateTo('settings-screen')">
+                <span>⚙️</span> <span id="loc-btn-settings">Настройки</span>
+            </button>
+            <a class="btn" href="https://t.me/kioline69" target="_blank" style="text-decoration:none; text-align:center;">
+                <span>✈️</span> Telegram
+            </a>
+        </div>
+    </div>
+
+    <div id="create-screen" class="screen">
+        <div class="screen-blocker" id="editor-blocker"></div>
+
+        <div class="screen-header">
+            <div class="header-left">
+                <button class="back-btn header-back" onclick="navigateTo('menu-screen')">◀ Назад</button>
+                <h2 id="loc-title-create">Создание</h2>
+            </div>
+            <button class="btn btn-primary btn-sm" onclick="openSaveSheet()" id="loc-btn-save-main">Сохранить</button>
+        </div>
+
+        <div class="canvas-container" id="canvas-holder">
+            <canvas id="watermark-canvas"></canvas>
+        </div>
+
+        <div class="editor-controls">
+            <div class="properties-panel" id="props-panel">
+                <div class="prop-slider-group">
+                    <label id="loc-p-scale">Размер</label>
+                    <input type="range" id="p-scale" min="10" max="300" value="100" oninput="updateSelectedLayer('scale', this.value)">
+                    <div class="prop-value" id="val-scale">100%</div>
+                </div>
+                <div class="prop-slider-group">
+                    <label id="loc-p-rotate">Поворот</label>
+                    <input type="range" id="p-rotate" min="0" max="360" value="0" oninput="updateSelectedLayer('rotate', this.value)">
+                    <div class="prop-value" id="val-rotate">0°</div>
+                </div>
+                <div class="prop-slider-group">
+                    <label id="loc-p-opacity">Прозрачность</label>
+                    <input type="range" id="p-opacity" min="0" max="100" value="100" oninput="updateSelectedLayer('opacity', this.value)">
+                    <div class="prop-value" id="val-opacity">100%</div>
+                </div>
+                <div class="prop-slider-group">
+                    <label id="loc-p-bright">Яркость</label>
+                    <input type="range" id="p-bright" min="0" max="200" value="100" oninput="updateSelectedLayer('brightness', this.value)">
+                    <div class="prop-value" id="val-bright">100%</div>
+                </div>
+                <div class="prop-slider-group">
+                    <label id="loc-p-sat">Насыщенность</label>
+                    <input type="range" id="p-sat" min="0" max="200" value="100" oninput="updateSelectedLayer('saturation', this.value)">
+                    <div class="prop-value" id="val-sat">100%</div>
+                </div>
+                <div class="prop-slider-group">
+                    <label id="loc-p-hue">Оттенок</label>
+                    <input type="range" id="p-hue" min="0" max="360" value="0" oninput="updateSelectedLayer('hue', this.value)">
+                    <div class="prop-value" id="val-hue">0°</div>
+                </div>
+                <div class="prop-slider-group">
+                    <label id="loc-p-blend">Наложение</label>
+                    <select id="p-blend" onchange="updateSelectedLayerBlend(this.value)" style="width:100%; margin-top:2px; padding:4px 6px; border-radius:6px; border:1px solid var(--border-color); background:var(--surface-color); color:var(--text-color); font-size:13px;">
+                        <option value="source-over">Обычный</option>
+                        <option value="multiply">Умножение</option>
+                        <option value="screen">Осветление</option>
+                        <option value="overlay">Перекрытие</option>
+                        <option value="soft-light">Мягкий свет</option>
+                        <option value="hard-light">Жёсткий свет</option>
+                        <option value="difference">Разница</option>
+                        <option value="exclusion">Исключение</option>
+                        <option value="color-dodge">Осветление цвета</option>
+                        <option value="color-burn">Затемнение цвета</option>
+                        <option value="luminosity">Яркость</option>
+                    </select>
+                </div>
+                <button class="btn btn-sm" style="background-color: #ff3b30; color:#fff; margin-top:4px;" onclick="deleteSelectedLayer()" id="loc-p-del">Удалить слой</button>
+            </div>
+
+            <div class="toolbar-row">
+                <button class="btn" onclick="addTextLayerPrompt()">🔤 <span id="loc-add-text">Текст</span></button>
+                <button class="btn" onclick="document.getElementById('img-loader').click()">🖼️ <span id="loc-add-img">Картинка</span></button>
+                <input type="file" id="img-loader" accept="image/*" style="display:none" onchange="addImageLayer(event)">
+            </div>
+        </div>
+
+        <div class="save-modal-sheet" id="save-sheet">
+            <div class="save-modal-title" id="loc-sheet-title">Сохранение водяного знака</div>
+            <div style="display: flex; flex-direction: column; gap: 6px;">
+                <label style="font-size: 14px; font-weight: 600;" id="loc-sheet-name-lbl">Название файла / шаблона</label>
+                <input type="text" id="save-output-name" placeholder="Watermark_1">
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 8px;">
+                <button class="btn btn-primary" onclick="exportAsPNG()"><span id="loc-sheet-png">Скачать как .PNG</span></button>
+                <button class="btn" onclick="saveToApplication()"><span id="loc-sheet-app">Сохранить в приложении</span></button>
+                <button class="btn btn-secondary" onclick="closeSaveSheet()"><span id="loc-sheet-cancel">Отмена</span></button>
+            </div>
+        </div>
+    </div>
+
+    <div id="apply-screen" class="screen">
+        <div class="screen-blocker" id="apply-blocker" onclick="closeApplySheets()"></div>
+
+        <div class="screen-header">
+            <button class="back-btn header-back" onclick="navigateTo('menu-screen')">◀ Назад</button>
+            <h2 id="loc-title-apply">Наложение</h2>
+            <button class="btn btn-primary btn-sm" id="apply-next-btn" onclick="handleApplyNext()">Далее</button>
+        </div>
+
+        <div class="placeholder-content" id="apply-upload-state">
+            <p id="loc-upload-desc">Выберите одно или несколько изображений со своего устройства для пакетного наложения.</p>
+            <button class="btn btn-primary" onclick="document.getElementById('bulk-img-loader').click()">
+                <span>📂</span> <span id="loc-choose-files">Выбрать изображения</span>
+            </button>
+            <input type="file" id="bulk-img-loader" accept="image/*" multiple style="display:none" onchange="loadBulkImages(event)">
+        </div>
+
+        <div id="apply-editor-state" style="display:none; width:100%; flex-direction:column; flex:1; overflow:hidden;">
+            <div class="thumb-carousel" id="apply-thumbs"></div>
+
+            <div class="canvas-container" id="apply-canvas-holder">
+                <div id="apply-canvas-viewport">
+                    <canvas id="apply-canvas"></canvas>
+                </div>
+            </div>
+
+            <div class="editor-controls">
+                <div class="properties-panel" id="apply-props-panel">
+                    <div class="prop-slider-group">
+                        <label id="loc-ap-scale">Размер</label>
+                        <input type="range" id="ap-scale" min="5" max="300" value="100" oninput="updateApplyLayer('scale', this.value)">
+                        <div class="prop-value" id="aval-scale">100%</div>
+                    </div>
+                    <div class="prop-slider-group">
+                        <label id="loc-ap-rotate">Поворот</label>
+                        <input type="range" id="ap-rotate" min="0" max="360" value="0" oninput="updateApplyLayer('rotate', this.value)">
+                        <div class="prop-value" id="aval-rotate">0°</div>
+                    </div>
+                    <div class="prop-slider-group">
+                        <label id="loc-ap-opacity">Прозрачность</label>
+                        <input type="range" id="ap-opacity" min="0" max="100" value="100" oninput="updateApplyLayer('opacity', this.value)">
+                        <div class="prop-value" id="aval-opacity">100%</div>
+                    </div>
+                    <div class="prop-slider-group">
+                        <label id="loc-ap-bright">Яркость</label>
+                        <input type="range" id="ap-bright" min="0" max="200" value="100" oninput="updateApplyLayer('brightness', this.value)">
+                        <div class="prop-value" id="aval-bright">100%</div>
+                    </div>
+                    <div class="prop-slider-group">
+                        <label id="loc-ap-sat">Насыщенность</label>
+                        <input type="range" id="ap-sat" min="0" max="200" value="100" oninput="updateApplyLayer('saturation', this.value)">
+                        <div class="prop-value" id="aval-sat">100%</div>
+                    </div>
+                    <div class="prop-slider-group">
+                        <label id="loc-ap-hue">Оттенок</label>
+                        <input type="range" id="ap-hue" min="0" max="360" value="0" oninput="updateApplyLayer('hue', this.value)">
+                        <div class="prop-value" id="aval-hue">0°</div>
+                    </div>
+                    <div class="prop-slider-group">
+                        <label id="loc-ap-blend">Наложение</label>
+                        <select id="ap-blend" onchange="updateApplyLayerBlend(this.value)" style="width:100%; margin-top:2px; padding:4px 6px; border-radius:6px; border:1px solid var(--border-color); background:var(--surface-color); color:var(--text-color); font-size:13px;">
+                            <option value="source-over">Обычный</option>
+                            <option value="multiply">Умножение</option>
+                            <option value="screen">Осветление</option>
+                            <option value="overlay">Перекрытие</option>
+                            <option value="soft-light">Мягкий свет</option>
+                            <option value="hard-light">Жёсткий свет</option>
+                            <option value="difference">Разница</option>
+                            <option value="exclusion">Исключение</option>
+                            <option value="color-dodge">Осветление цвета</option>
+                            <option value="color-burn">Затемнение цвета</option>
+                            <option value="luminosity">Яркость</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="toolbar-row" id="apply-main-toolbar">
+                    <button class="btn btn-sm" onclick="openSavedWtmSheet()">💾 <span id="loc-saved-wtm">Готовые ВЗ</span></button>
+                    <button class="btn btn-sm" onclick="document.getElementById('external-wtm-loader').click()">🖼️ <span id="loc-file-wtm">Изображение</span></button>
+                    <button class="btn btn-sm" onclick="openLayersSheet()">🥞 <span id="loc-layers-lbl">Слои</span></button>
+                    <input type="file" id="external-wtm-loader" accept="image/*" style="display:none" onchange="addExternalImageWtm(event)">
+                </div>
+            </div>
+        </div>
+
+        <div class="save-modal-sheet" id="sheet-saved-wtm">
+            <div class="save-modal-title" id="loc-saved-title">Выберите сохранённый знак</div>
+            <div id="saved-wtm-list" style="max-height:300px; overflow-y:auto;"></div>
+            <button class="btn btn-secondary" onclick="closeApplySheets()">Отмена</button>
+        </div>
+
+        <div class="save-modal-sheet" id="sheet-layers">
+            <div class="save-modal-title" id="loc-layers-title">Слои водяного знака</div>
+            <div id="apply-layers-list" style="max-height:300px; overflow-y:auto;"></div>
+            <button class="btn btn-secondary" onclick="closeApplySheets()">Закрыть</button>
+        </div>
+    </div>
+
+    <div id="settings-screen" class="screen">
+        <div class="screen-header">
+            <button class="back-btn header-back" onclick="navigateTo('menu-screen')" id="loc-back">◀ Назад</button>
+            <h2 id="loc-settings-title">Настройки</h2>
+        </div>
+
+        <div class="settings-group">
+            <div class="settings-row">
+                <label class="settings-label" id="loc-lang-label">Язык / Language</label>
+                <select id="setting-lang" onchange="changeLanguage(this.value)">
+                    <option value="ru">Русский</option>
+                    <option value="en">English</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="settings-group">
+            <div class="settings-row">
+                <label class="settings-label" id="loc-theme-label">Тема приложения</label>
+                <select id="setting-theme" onchange="changeTheme(this.value)">
+                    <option value="light" id="theme-light">Светлая</option>
+                    <option value="dark" id="theme-dark">Тёмная</option>
+                    <option value="amoled" id="theme-amoled">AMOLED (Чёрная)</option>
+                    <optgroup label="Красная" id="g-red"><option value="red-light" id="theme-red-light">Красная (Светлая)</option><option value="red-dark" id="theme-red-dark">Красная (Тёмная)</option></optgroup>
+                    <optgroup label="Оранжевая" id="g-orange"><option value="orange-light" id="theme-orange-light">Оранжевая (Светлая)</option><option value="orange-dark" id="theme-orange-dark">Оранжевая (Тёмная)</option></optgroup>
+                    <optgroup label="Жёлтая" id="g-yellow"><option value="yellow-light" id="theme-yellow-light">Жёлтая (Светлая)</option><option value="yellow-dark" id="theme-yellow-dark">Жёлтая (Тёмная)</option></optgroup>
+                    <optgroup label="Зелёная" id="g-green"><option value="green-light" id="theme-green-light">Зелёная (Светлая)</option><option value="green-dark" id="theme-green-dark">Зелёная (Тёмная)</option></optgroup>
+                    <optgroup label="Голубая" id="g-lblue"><option value="light-blue-light" id="theme-lblue-light">Голубая (Светлая)</option><option value="light-blue-dark" id="theme-lblue-dark">Голубая (Тёмная)</option></optgroup>
+                    <optgroup label="Синяя" id="g-blue"><option value="blue-light" id="theme-blue-light">Синяя (Светлая)</option><option value="blue-dark" id="theme-blue-dark">Синяя (Тёмная)</option></optgroup>
+                    <optgroup label="Фиолетовая" id="g-purple"><option value="purple-light" id="theme-purple-light">Фиолетовая (Светлая)</option><option value="purple-dark" id="theme-purple-dark">Фиолетовая (Тёмная)</option></optgroup>
+                    <optgroup label="Розовая" id="g-pink"><option value="pink-light" id="theme-pink-light">Розовая (Светлая)</option><option value="pink-dark" id="theme-pink-dark">Розовая (Тёмная)</option></optgroup>
+                </select>
+            </div>
+        </div>
+
+        <div class="settings-group">
+            <div class="settings-row">
+                <label class="settings-label" id="loc-filename-label">Шаблон названия файла</label>
+                <p class="settings-desc warning-text" id="loc-filename-warn">Не трогайте, если не знаете, что это!</p>
+                <input type="text" id="setting-filename" oninput="saveFilenamePattern(this.value)">
+                <p class="settings-desc" style="margin-top: 10px;" id="loc-filename-instruction">
+                    Инструкция:<br>{n} — порядковый номер файла<br>{f} — текущие дата и время
+                </p>
+            </div>
+            <div class="settings-row">
+                <label class="settings-label" id="loc-format-label">Формат сохранения</label>
+                <select id="setting-format" onchange="saveExportFormat(this.value)">
+                    <option value="original" id="fmt-original">Оригинальный</option>
+                    <option value="png" id="fmt-png">.PNG</option>
+                    <option value="jpg" id="fmt-jpg">.JPG</option>
+                </select>
+            </div>
+        </div>
+
+        <p style="text-align:center; font-size:11px; color: var(--text-color); opacity:0.4; margin-top:16px; padding-bottom:8px;">
+            Идея: MaxwellLink (aka Kioline). Сгенерировано с помощью Claude
+        </p>
+    </div>
+
+    <script>
+        // --- ЛОКАЛИЗАЦИЯ ---
+        const i18n = {
+            ru: {
+                subtitle: "Пакетное наложение водяных знаков", btnCreate: "Создать водяной знак", btnApply: "Наложить водяной знак", btnSettings: "Настройки", back: "◀ Назад", titleCreate: "Создание", titleApply: "Наложение", settingsTitle: "Настройки", langLabel: "Язык", themeLabel: "Тема приложения", filenameLabel: "Шаблон названия файла", filenameWarn: "Не трогайте, если не знаете, что это!", filenameInst: "Инструкция:<br>{n} — порядковый номер файла<br>{f} — текущие дата и время",
+                formatLabel: "Формат сохранения", fmtOriginal: "Оригинальный", fmtPng: ".PNG", fmtJpg: ".JPG",
+                tLight: "Светлая", tDark: "Тёмная", tAmoled: "AMOLED (Чёрная)", gRed: "Красная", tRedL: "Красная (Светлая)", tRedD: "Красная (Тёмная)", gOrange: "Оранжевая", tOrangeL: "Оранжевая (Светлая)", tOrangeD: "Оранжевая (Тёмная)", gYellow: "Жёлтая", tYellowL: "Жёлтая (Светлая)", tYellowD: "Жёлтая (Тёмная)", gGreen: "Зелёная", tGreenL: "Зелёная (Светлая)", tGreenD: "Зелёная (Тёмная)", gLblue: "Голубая", tLblueL: "Голубая (Светлая)", tLblueD: "Голубая (Тёмная)", gBlue: "Синяя", tBlueL: "Синяя (Светлая)", tBlueD: "Синяя (Тёмная)", gPurple: "Фиолетовая", tPurpleL: "Фиолетовая (Светлая)", tPurpleD: "Фиолетовая (Тёмная)", gPink: "Розовая", tPinkL: "Розовая (Светлая)", tPinkD: "Розовая (Тёмная)",
+                addText: "Текст", addImg: "Картинка", saveMain: "Сохранить", pScale: "Размер", pRotate: "Поворот", pOpacity: "Прозрачность", pBright: "Яркость", pSat: "Насыщенность", pHue: "Оттенок", pDel: "Удалить слой", promptText: "Введите текст водяного знака:",
+                sheetTitle: "Сохранение водяного знака", sheetNameLbl: "Название файла / шаблона", sheetPng: "Скачать как .PNG", sheetApp: "Сохранить в приложении", sheetCancel: "Отмена",
+                uploadDesc: "Выберите одно или несколько изображений со своего устройства для пакетного наложения.", chooseFiles: "Выбрать изображения", savedWtm: "Готовые ВЗ", fileWtm: "Изображение", layersLbl: "Слои", savedTitle: "Выберите сохранённый знак", layersTitle: "Слои водяного знака"
+            },
+            en: {
+                subtitle: "Batch Watermarking Application", btnCreate: "Create Watermark", btnApply: "Apply Watermark", btnSettings: "Settings", back: "◀ Back", titleCreate: "Create", titleApply: "Apply", settingsTitle: "Settings", langLabel: "Language", themeLabel: "App Theme", filenameLabel: "Filename Template", filenameWarn: "Do not modify if you don't know what it is!", filenameInst: "Instruction:<br>{n} — sequential number<br>{f} — current date and time",
+                formatLabel: "Export Format", fmtOriginal: "Original", fmtPng: ".PNG", fmtJpg: ".JPG",
+                tLight: "Light", tDark: "Dark", tAmoled: "AMOLED (Black)", gRed: "Red", tRedL: "Red (Light)", tRedD: "Red (Dark)", gOrange: "Orange", tOrangeL: "Orange (Light)", tOrangeD: "Orange (Dark)", gYellow: "Yellow", tYellowL: "Yellow (Light)", tYellowD: "Yellow (Dark)", gGreen: "Green", tGreenL: "Green (Light)", tGreenD: "Green (Dark)", gLblue: "Light Blue", tLblueL: "Light Blue (Light)", tLblueD: "Light Blue (Dark)", gBlue: "Blue", tBlueL: "Blue (Light)", tBlueD: "Blue (Dark)", gPurple: "Purple", tPurpleL: "Purple (Light)", tPurpleD: "Purple (Dark)", gPink: "Pink", tPinkL: "Pink (Light)", tPinkD: "Pink (Dark)",
+                addText: "Text", addImg: "Image", saveMain: "Save", pScale: "Size", pRotate: "Rotation", pOpacity: "Opacity", pBright: "Brightness", pSat: "Saturation", pHue: "Hue", pDel: "Delete Layer", promptText: "Enter watermark text:",
+                sheetTitle: "Save Watermark", sheetNameLbl: "Filename / Template Name", sheetPng: "Download as .PNG", sheetApp: "Save in Application", sheetCancel: "Cancel",
+                uploadDesc: "Select one or multiple images from your device for bulk watermarking.", chooseFiles: "Select Images", savedWtm: "Saved WM", fileWtm: "Image File", layersLbl: "Layers", savedTitle: "Select Saved Watermark", layersTitle: "Watermark Layers"
+            }
+        };
+
+        // --- СОСТОЯНИЕ ПРИЛОЖЕНИЯ ---
+        let appSettings = { lang: "ru", theme: "light", filenamePattern: "wtm_{n}{f}", exportFormat: "original" };
+        let canvas, ctx;
+        let layers = [];
+        let selectedLayer = null;
+        
+        let dragMode = null; // 'move', 'resize' или 'rotate'
+        let activeHandle = null; 
+        let startX, startY, startScale, startAngle, startRotate;
+        const CANVAS_VIRTUAL_SIZE = 1000;
+        const HANDLE_SIZE = 24; 
+
+        // СОСТОЯНИЕ ВКЛАДКИ НАЛОЖЕНИЯ (БАТЧ ИМПОРТ)
+        let bulkImages = []; // Массив объектов: { id, img, name, ext, layers: [] }
+        let currentBulkIndex = 0; 
+        let applyCanvas, applyCtx;
+        let globalWtmLayers = []; // Глобальный эталонный набор слоев для синхронизации
+        let isEditStage = false; // false - этап 1 (синхронное размещение), true - этап 2 (покадровое редактирование)
+
+        window.addEventListener('DOMContentLoaded', () => {
+            loadSettings();
+            applyCurrentSettings();
+            initCanvas();
+            initApplyCanvas();
+        });
+
+        function navigateTo(screenId) {
+            document.querySelectorAll('.screen').forEach(screen => screen.classList.remove('active'));
+            document.getElementById(screenId).classList.add('active');
+        }
+
+        function navigateToCreateScreen() {
+            navigateTo('create-screen');
+            resizeCanvasElement();
+            layers = [];
+            selectLayer(null);
+            closeSaveSheet();
+            draw();
+        }
+
+        function navigateToApplyScreen() {
+            navigateTo('apply-screen');
+            resetApplyState();
+        }
+
+        function initCanvas() {
+            canvas = document.getElementById('watermark-canvas');
+            ctx = canvas.getContext('2d');
+            canvas.width = CANVAS_VIRTUAL_SIZE;
+            canvas.height = CANVAS_VIRTUAL_SIZE;
+
+            canvas.addEventListener('mousedown', startDrag);
+            canvas.addEventListener('mousemove', drag);
+            canvas.addEventListener('mouseup', endDrag);
+            canvas.addEventListener('mouseleave', endDrag);
+
+            canvas.addEventListener('touchstart', (e) => {
+                if (e.touches.length === 1) { startDrag(e.touches[0]); e.preventDefault(); }
+            }, {passive: false});
+            canvas.addEventListener('touchmove', (e) => {
+                if (e.touches.length === 1) { drag(e.touches[0]); e.preventDefault(); }
+            }, {passive: false});
+            canvas.addEventListener('touchend', () => endDrag());
+        }
+
+        function initApplyCanvas() {
+            applyCanvas = document.getElementById('apply-canvas');
+            applyCtx = applyCanvas.getContext('2d');
+
+            const holder = document.getElementById('apply-canvas-holder');
+
+            holder.addEventListener('mousedown', (e) => startDragApply(e));
+            holder.addEventListener('mousemove', (e) => dragApply(e));
+            holder.addEventListener('mouseup', endDragApply);
+            holder.addEventListener('mouseleave', endDragApply);
+
+            holder.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                if (e.touches.length === 2) {
+                    endDragApply();
+                    pinchStartApply(e);
+                } else if (e.touches.length === 1) {
+                    startDragApply(e.touches[0]);
+                }
+            }, {passive: false});
+
+            holder.addEventListener('touchmove', (e) => {
+                e.preventDefault();
+                if (e.touches.length === 2) {
+                    pinchMoveApply(e);
+                } else if (e.touches.length === 1) {
+                    dragApply(e.touches[0]);
+                }
+            }, {passive: false});
+
+            holder.addEventListener('touchend', (e) => {
+                pinchStartDist = 0;
+                if (e.touches.length === 0) endDragApply();
+            });
+        }
+
+        function resizeCanvasElement() {
+            // Create-холст всегда квадратный
+            const holder = document.getElementById('canvas-holder');
+            if (holder) {
+                const size = holder.clientWidth;
+                canvas.style.width = size + 'px';
+                canvas.style.height = size + 'px';
+            }
+            // Apply-холст: вписываем в контейнер, центрируем
+            const applyHolder = document.getElementById('apply-canvas-holder');
+            if (applyHolder && applyCanvas && applyCanvas.width > 0 && applyCanvas.height > 0) {
+                const cW = applyHolder.clientWidth;
+                const cH = applyHolder.clientHeight || cW; // fallback если layout ещё не случился
+                const aspect = applyCanvas.width / applyCanvas.height;
+                if (aspect >= cW / cH) {
+                    applyCanvasBaseW = cW;
+                    applyCanvasBaseH = cW / aspect;
+                } else {
+                    applyCanvasBaseH = cH;
+                    applyCanvasBaseW = cH * aspect;
+                }
+                applyCanvas.style.width = applyCanvasBaseW + 'px';
+                applyCanvas.style.height = applyCanvasBaseH + 'px';
+                // Всегда пересчитываем центрирование при scale=1
+                vp.panX = (cW - applyCanvasBaseW) / 2;
+                vp.panY = (cH - applyCanvasBaseH) / 2;
+                applyViewportTransform();
+            }
+        }
+        window.addEventListener('resize', resizeCanvasElement);
+
+        // --- УПРАВЛЕНИЕ ШТОРКОЙ СОХРАНЕНИЯ ШАБЛОНОВ ---
+        function openSaveSheet() {
+            const nextIndex = getInstalledWatermarks().length + 1;
+            document.getElementById('save-output-name').value = "Watermark_" + nextIndex;
+            selectLayer(null);
+            document.getElementById('editor-blocker').style.display = 'block';
+            document.getElementById('save-sheet').classList.add('open');
+        }
+
+        function closeSaveSheet() {
+            document.getElementById('editor-blocker').style.display = 'none';
+            document.getElementById('save-sheet').classList.remove('open');
+        }
+
+        function exportAsPNG() {
+            const fileName = document.getElementById('save-output-name').value.trim() || "watermark";
+            const link = document.createElement('a');
+            link.download = fileName + '.png';
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+            closeSaveSheet();
+        }
+
+        function saveToApplication() {
+            const name = document.getElementById('save-output-name').value.trim() || "Watermark";
+            const serializedLayers = layers.map(l => {
+                const item = { ...l };
+                if (item.type === 'image') {
+                    const tempCanvas = document.createElement('canvas');
+                    tempCanvas.width = item.origW;
+                    tempCanvas.height = item.origH;
+                    tempCanvas.getContext('2d').drawImage(item.img, 0, 0);
+                    item.imgDataUrl = tempCanvas.toDataURL();
+                    delete item.img;
+                }
+                return item;
+            });
+
+            const savedList = getInstalledWatermarks();
+            savedList.push({ id: Date.now(), name: name, layers: serializedLayers });
+            localStorage.setItem('watermaster_saved_items', JSON.stringify(savedList));
+            
+            alert(appSettings.lang === 'ru' ? "Успешно сохранено!" : "Successfully saved!");
+            closeSaveSheet();
+            navigateTo('menu-screen');
+        }
+
+        // --- ЛОГИКА РЕДАКТОРА ШАБЛОНОВ ---
+        function addTextLayerPrompt() {
+            const dict = i18n[appSettings.lang];
+            const text = prompt(dict.promptText, "Watermark");
+            if (!text) return;
+
+            const layer = {
+                id: Date.now(),
+                type: 'text',
+                text: text,
+                x: CANVAS_VIRTUAL_SIZE / 2,
+                y: CANVAS_VIRTUAL_SIZE / 2,
+                scale: 100,
+                rotate: 0,
+                opacity: 100,
+                brightness: 100,
+                saturation: 100,
+                hue: 0,
+                blendMode: 'source-over',
+                visible: true
+            };
+            layers.push(layer);
+            selectLayer(layer);
+            draw();
+        }
+
+        function addImageLayer(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const img = new Image();
+                img.onload = function() {
+                    const layer = {
+                        id: Date.now(),
+                        type: 'image',
+                        img: img,
+                        x: CANVAS_VIRTUAL_SIZE / 2,
+                        y: CANVAS_VIRTUAL_SIZE / 2,
+                        origW: img.width,
+                        origH: img.height,
+                        scale: 50,
+                        rotate: 0,
+                        opacity: 100,
+                        brightness: 100,
+                        saturation: 100,
+                        hue: 0,
+                        blendMode: 'source-over',
+                        visible: true
+                    };
+                    layers.push(layer);
+                    selectLayer(layer);
+                    draw();
+                };
+                img.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
+            event.target.value = '';
+        }
+
+        function selectLayer(layer) {
+            if(document.getElementById('save-sheet').classList.contains('open')) return;
+
+            selectedLayer = layer;
+            if (layer) {
+                document.getElementById('props-panel').style.display = 'flex';
+                document.getElementById('p-scale').value = layer.scale;
+                document.getElementById('p-rotate').value = layer.rotate;
+                document.getElementById('p-opacity').value = layer.opacity;
+                document.getElementById('p-bright').value = layer.brightness;
+                document.getElementById('p-sat').value = layer.saturation;
+                document.getElementById('p-hue').value = layer.hue;
+                document.getElementById('p-blend').value = layer.blendMode || 'source-over';
+                updateSliderLabels();
+            } else {
+                document.getElementById('props-panel').style.display = 'none';
+            }
+            draw();
+        }
+
+        function updateSelectedLayerBlend(value) {
+            if (!selectedLayer) return;
+            selectedLayer.blendMode = value;
+            draw();
+        }
+
+        function updateApplyLayerBlend(value) {
+            if (!selectedLayer) return;
+            selectedLayer.blendMode = value;
+            drawApply();
+        }
+
+        function updateSelectedLayer(prop, value) {
+            if (!selectedLayer) return;
+            selectedLayer[prop] = parseInt(value);
+            updateSliderLabels();
+            draw();
+        }
+
+        function updateSliderLabels() {
+            if (!selectedLayer) return;
+            document.getElementById('val-scale').innerText = selectedLayer.scale + '%';
+            document.getElementById('val-rotate').innerText = selectedLayer.rotate + '°';
+            document.getElementById('val-opacity').innerText = selectedLayer.opacity + '%';
+            document.getElementById('val-bright').innerText = selectedLayer.brightness + '%';
+            document.getElementById('val-sat').innerText = selectedLayer.saturation + '%';
+            document.getElementById('val-hue').innerText = selectedLayer.hue + '°';
+        }
+
+        function deleteSelectedLayer() {
+            if (!selectedLayer) return;
+            layers = layers.filter(l => l.id !== selectedLayer.id);
+            selectLayer(null);
+        }
+
+        function getLayerSize(layer, contextSize = CANVAS_VIRTUAL_SIZE) {
+            let w = 0, h = 0;
+            if (layer.type === 'text') {
+                const fontSize = Math.round(50 * (layer.scale / 100));
+                ctx.font = `bold ${fontSize}px sans-serif`;
+                w = ctx.measureText(layer.text).width + 20;
+                h = fontSize + 20;
+            } else {
+                const aspect = layer.origH / layer.origW;
+                w = contextSize * (layer.scale / 100);
+                h = w * aspect;
+            }
+            return { w, h };
+        }
+
+        // --- РЕНДЕРИНГ ХОЛСТА ШАБЛОНОВ ---
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            layers.forEach(layer => {
+                if(layer.visible === false) return;
+                ctx.save();
+                ctx.translate(layer.x, layer.y);
+                ctx.rotate((layer.rotate * Math.PI) / 180);
+                ctx.filter = `brightness(${layer.brightness}%) saturate(${layer.saturation}%) hue-rotate(${layer.hue}deg)`;
+                ctx.globalAlpha = layer.opacity / 100;
+                ctx.globalCompositeOperation = layer.blendMode || 'source-over';
+
+                const { w, h } = getLayerSize(layer, CANVAS_VIRTUAL_SIZE);
+
+                if (layer.type === 'text') {
+                    const fontSize = Math.round(50 * (layer.scale / 100));
+                    ctx.font = `bold ${fontSize}px sans-serif`;
+                    ctx.fillStyle = '#ffffff';
+                    ctx.textBaseline = 'middle';
+                    ctx.textAlign = 'center';
+                    ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
+                    ctx.shadowBlur = 8;
+                    ctx.fillText(layer.text, 0, 0);
+                } else if (layer.type === 'image') {
+                    ctx.drawImage(layer.img, -w/2, -h/2, w, h);
+                }
+
+                if (selectedLayer && selectedLayer.id === layer.id) {
+                    ctx.filter = 'none';
+                    ctx.globalAlpha = 1.0;
+                    ctx.globalCompositeOperation = 'source-over';
+                    ctx.strokeStyle = varColor('--accent-color');
+                    ctx.lineWidth = 4;
+                    ctx.shadowBlur = 0;
+                    ctx.strokeRect(-w/2, -h/2, w, h);
+
+                    // Угловые ручки масштаба
+                    ctx.fillStyle = '#ffffff';
+                    const corners = [{x: -w/2, y: -h/2}, {x: w/2, y: -h/2}, {x: w/2, y: h/2}, {x: -w/2, y: h/2}];
+                    corners.forEach(c => {
+                        ctx.fillRect(c.x - HANDLE_SIZE/2, c.y - HANDLE_SIZE/2, HANDLE_SIZE, HANDLE_SIZE);
+                        ctx.strokeRect(c.x - HANDLE_SIZE/2, c.y - HANDLE_SIZE/2, HANDLE_SIZE, HANDLE_SIZE);
+                    });
+
+                    // Ручка поворота — круг над верхней серединой
+                    const rotOffset = HANDLE_SIZE * 2.5;
+                    const rotHY = -h/2 - rotOffset;
+                    ctx.beginPath();
+                    ctx.moveTo(0, -h/2);
+                    ctx.lineTo(0, rotHY);
+                    ctx.strokeStyle = varColor('--accent-color');
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+                    ctx.beginPath();
+                    ctx.arc(0, rotHY, HANDLE_SIZE / 2, 0, Math.PI * 2);
+                    ctx.fillStyle = '#4caf50';
+                    ctx.fill();
+                    ctx.strokeStyle = '#fff';
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+                }
+                ctx.restore();
+            });
+        }
+
+        // --- ВЬЮПОРТ APPLY-ХОЛСТА ---
+        let vp = { scale: 1, panX: 0, panY: 0 };
+        let applyCanvasBaseW = 0, applyCanvasBaseH = 0;
+
+        // Экранные координаты → координаты в пространстве canvas (applyCanvas.width × applyCanvas.height)
+        // и в виртуальном пространстве (0..1000)
+        function screenToVirtual(clientX, clientY) {
+            const holder = document.getElementById('apply-canvas-holder');
+            const rect = holder.getBoundingClientRect();
+            const cx = clientX - rect.left;
+            const cy = clientY - rect.top;
+            // CSS-пиксели внутри canvas (при scale=1 canvas занимает applyCanvasBaseW×applyCanvasBaseH)
+            const cssPx = (cx - vp.panX) / vp.scale;
+            const cssPy = (cy - vp.panY) / vp.scale;
+            // canvas-пиксели (то, что используют drawApply и hit-test)
+            const px = applyCanvasBaseW > 0 ? (cssPx / applyCanvasBaseW) * applyCanvas.width : 0;
+            const py = applyCanvasBaseH > 0 ? (cssPy / applyCanvasBaseH) * applyCanvas.height : 0;
+            return {
+                px,  // canvas-пиксели (для hit-test)
+                py,
+                vx: applyCanvas.width > 0 ? (px / applyCanvas.width) * 1000 : 0,
+                vy: applyCanvas.height > 0 ? (py / applyCanvas.height) * 1000 : 0
+            };
+        }
+
+        function applyViewportTransform() {
+            const vport = document.getElementById('apply-canvas-viewport');
+            if (vport) vport.style.transform = `translate(${vp.panX}px,${vp.panY}px) scale(${vp.scale})`;
+        }
+
+        // Пересчёт canvas-пикселей в экранные пиксели (для hit-test)
+        function virtualToCanvasPixel(vx, vy) {
+            return {
+                px: applyCanvasBaseW > 0 ? (vx / 1000) * applyCanvasBaseW : 0,
+                py: applyCanvasBaseH > 0 ? (vy / 1000) * applyCanvasBaseH : 0
+            };
+        }
+
+        // --- ПИНЧ-ЗУМ И ПАН ---
+        let pinchStartDist = 0;
+        let pinchStartVpScale = 1, pinchStartPanX = 0, pinchStartPanY = 0;
+        let pinchStartMidX = 0, pinchStartMidY = 0;
+        let pinchCurMidX = 0, pinchCurMidY = 0;
+
+        function getTouchDist(e) {
+            return Math.hypot(e.touches[1].clientX - e.touches[0].clientX, e.touches[1].clientY - e.touches[0].clientY);
+        }
+
+        function getTouchMid(e) {
+            const holder = document.getElementById('apply-canvas-holder');
+            const rect = holder.getBoundingClientRect();
+            return {
+                x: (e.touches[0].clientX + e.touches[1].clientX) / 2 - rect.left,
+                y: (e.touches[0].clientY + e.touches[1].clientY) / 2 - rect.top
+            };
+        }
+
+        function pinchStartApply(e) {
+            pinchStartDist = getTouchDist(e);
+            pinchStartVpScale = vp.scale;
+            pinchStartPanX = vp.panX;
+            pinchStartPanY = vp.panY;
+            const mid = getTouchMid(e);
+            pinchStartMidX = mid.x;
+            pinchStartMidY = mid.y;
+            pinchCurMidX = mid.x;
+            pinchCurMidY = mid.y;
+        }
+
+        function pinchMoveApply(e) {
+            if (pinchStartDist === 0) return;
+            const dist = getTouchDist(e);
+            const mid = getTouchMid(e);
+            const ratio = dist / pinchStartDist;
+            const newScale = Math.max(0.3, Math.min(10, pinchStartVpScale * ratio));
+
+            // Зум относительно начальной средней точки + учёт пана средней точки
+            const panDx = mid.x - pinchStartMidX;
+            const panDy = mid.y - pinchStartMidY;
+
+            vp.scale = newScale;
+            vp.panX = mid.x - (pinchStartMidX - pinchStartPanX) * (newScale / pinchStartVpScale);
+            vp.panY = mid.y - (pinchStartMidY - pinchStartPanY) * (newScale / pinchStartVpScale);
+
+            applyViewportTransform();
+        }
+
+        function startDrag(e) {
+            if(document.getElementById('save-sheet').classList.contains('open')) return;
+
+            const rect = canvas.getBoundingClientRect();
+            const clickX = ((e.clientX - rect.left) / rect.width) * CANVAS_VIRTUAL_SIZE;
+            const clickY = ((e.clientY - rect.top) / rect.height) * CANVAS_VIRTUAL_SIZE;
+
+            if (selectedLayer) {
+                const { w, h } = getLayerSize(selectedLayer, CANVAS_VIRTUAL_SIZE);
+                const rad = (selectedLayer.rotate * Math.PI) / 180;
+
+                // Ручка поворота
+                const rotOffset = HANDLE_SIZE * 2.5;
+                const localRotHY = -(h/2 + rotOffset);
+                const rotHWorldX = selectedLayer.x - localRotHY * Math.sin(rad);
+                const rotHWorldY = selectedLayer.y + localRotHY * Math.cos(rad);
+                if (Math.hypot(clickX - rotHWorldX, clickY - rotHWorldY) <= HANDLE_SIZE) {
+                    dragMode = 'rotate';
+                    startAngle = Math.atan2(clickY - selectedLayer.y, clickX - selectedLayer.x);
+                    startRotate = selectedLayer.rotate;
+                    return;
+                }
+
+                // Угловые ручки масштаба
+                const corners = [{x: -w/2, y: -h/2}, {x: w/2, y: -h/2}, {x: w/2, y: h/2}, {x: -w/2, y: h/2}];
+                for (let i = 0; i < corners.length; i++) {
+                    const rotX = selectedLayer.x + corners[i].x * Math.cos(rad) - corners[i].y * Math.sin(rad);
+                    const rotY = selectedLayer.y + corners[i].x * Math.sin(rad) + corners[i].y * Math.cos(rad);
+                    if (Math.abs(clickX - rotX) <= HANDLE_SIZE && Math.abs(clickY - rotY) <= HANDLE_SIZE) {
+                        dragMode = 'resize';
+                        activeHandle = i;
+                        startX = clickX;
+                        startY = clickY;
+                        startScale = selectedLayer.scale;
+                        return;
+                    }
+                }
+            }
+
+            let hitDetected = false;
+            for (let i = layers.length - 1; i >= 0; i--) {
+                const layer = layers[i];
+                if(layer.visible === false) continue;
+                const { w, h } = getLayerSize(layer, CANVAS_VIRTUAL_SIZE);
+
+                const dx = clickX - layer.x;
+                const dy = clickY - layer.y;
+                const rad = (-layer.rotate * Math.PI) / 180;
+                const localX = dx * Math.cos(rad) - dy * Math.sin(rad);
+                const localY = dx * Math.sin(rad) + dy * Math.cos(rad);
+
+                if (localX >= -w/2 && localX <= w/2 && localY >= -h/2 && localY <= h/2) {
+                    selectLayer(layer);
+                    dragMode = 'move';
+                    startX = clickX - layer.x;
+                    startY = clickY - layer.y;
+                    hitDetected = true;
+                    break;
+                }
+            }
+
+            if (!hitDetected) selectLayer(null);
+        }
+
+        function drag(e) {
+            if (!dragMode || !selectedLayer) return;
+
+            const rect = canvas.getBoundingClientRect();
+            const currentX = ((e.clientX - rect.left) / rect.width) * CANVAS_VIRTUAL_SIZE;
+            const currentY = ((e.clientY - rect.top) / rect.height) * CANVAS_VIRTUAL_SIZE;
+
+            if (dragMode === 'move') {
+                selectedLayer.x = currentX - startX;
+                selectedLayer.y = currentY - startY;
+            } else if (dragMode === 'resize') {
+                const distStart = Math.hypot(startX - selectedLayer.x, startY - selectedLayer.y);
+                const distCurrent = Math.hypot(currentX - selectedLayer.x, currentY - selectedLayer.y);
+                let newScale = startScale * (distCurrent / distStart);
+                newScale = Math.max(10, Math.min(300, newScale));
+                selectedLayer.scale = Math.round(newScale);
+                document.getElementById('p-scale').value = selectedLayer.scale;
+                updateSliderLabels();
+            } else if (dragMode === 'rotate') {
+                const currentAngle = Math.atan2(currentY - selectedLayer.y, currentX - selectedLayer.x);
+                const delta = (currentAngle - startAngle) * 180 / Math.PI;
+                selectedLayer.rotate = Math.round(((startRotate + delta) % 360 + 360) % 360);
+                document.getElementById('p-rotate').value = selectedLayer.rotate;
+                updateSliderLabels();
+            }
+            draw();
+        }
+
+        function endDrag() { 
+            dragMode = null; 
+            activeHandle = null;
+        }
+
+        // --- МОДУЛЬ ПАКЕТНОГО НАЛОЖЕНИЯ (APPLY SCREEN) ---
+        function resetApplyState() {
+            bulkImages = [];
+            globalWtmLayers = [];
+            currentBulkIndex = 0;
+            selectedLayer = null;
+            isEditStage = false;
+            dragMode = null;
+
+            document.getElementById('apply-upload-state').style.display = 'flex';
+            document.getElementById('apply-editor-state').style.display = 'none';
+            document.getElementById('apply-props-panel').style.display = 'none';
+            document.getElementById('apply-main-toolbar').style.display = 'flex';
+            document.getElementById('apply-next-btn').innerText = appSettings.lang === 'ru' ? "Далее" : "Next";
+            closeApplySheets();
+        }
+
+        function loadBulkImages(event) {
+            const files = Array.from(event.target.files);
+            if(files.length === 0) return;
+
+            let loadedCount = 0;
+            bulkImages = [];
+
+            files.forEach((file, idx) => {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    const img = new Image();
+                    img.onload = function() {
+                        const dotIndex = file.name.lastIndexOf('.');
+                        const name = dotIndex !== -1 ? file.name.substring(0, dotIndex) : file.name;
+                        const ext = dotIndex !== -1 ? file.name.substring(dotIndex) : '.png';
+
+                        bulkImages.push({
+                            id: Date.now() + '_' + idx,
+                            img: img,
+                            name: name,
+                            ext: ext,
+                            layers: [] 
+                        });
+
+                        loadedCount++;
+                        if(loadedCount === files.length) {
+                            startApplyEditor();
+                        }
+                    };
+                    img.src = e.target.result;
+                };
+                reader.readAsDataURL(file);
+            });
+            event.target.value = '';
+        }
+
+        function startApplyEditor() {
+            document.getElementById('apply-upload-state').style.display = 'none';
+            document.getElementById('apply-editor-state').style.display = 'flex';
+            currentBulkIndex = 0;
+            buildThumbCarousel();
+            selectBulkImage(0);
+        }
+
+        function buildThumbCarousel() {
+            const container = document.getElementById('apply-thumbs');
+            container.innerHTML = '';
+            bulkImages.forEach((bImg, idx) => {
+                const imgEl = document.createElement('img');
+                imgEl.src = bImg.img.src;
+                imgEl.className = 'thumb-item' + (idx === currentBulkIndex ? ' active' : '');
+                imgEl.onclick = () => selectBulkImage(idx);
+                container.appendChild(imgEl);
+            });
+        }
+
+        function selectBulkImage(index) {
+            if(index < 0 || index >= bulkImages.length) return;
+            
+            currentBulkIndex = index;
+
+            const thumbs = document.querySelectorAll('.thumb-item');
+            thumbs.forEach((t, idx) => {
+                if(idx === index) t.classList.add('active');
+                else t.classList.remove('active');
+            });
+
+            const bImg = bulkImages[currentBulkIndex];
+            
+            applyCanvas.width = bImg.img.width;
+            applyCanvas.height = bImg.img.height;
+
+            selectApplyLayer(null);
+            vp = { scale: 1, panX: 0, panY: 0 };
+            setTimeout(() => { resizeCanvasElement(); drawApply(); }, 50);
+        }
+
+        function getCurrentActiveLayers() {
+            if (bulkImages.length === 0) return [];
+            if (!isEditStage) {
+                return globalWtmLayers;
+            } else {
+                return bulkImages[currentBulkIndex].layers;
+            }
+        }
+
+        function drawApply() {
+            if(bulkImages.length === 0) return;
+            applyCtx.clearRect(0, 0, applyCanvas.width, applyCanvas.height);
+
+            const bImg = bulkImages[currentBulkIndex];
+            applyCtx.drawImage(bImg.img, 0, 0, applyCanvas.width, applyCanvas.height);
+
+            const activeLayers = getCurrentActiveLayers();
+
+            activeLayers.forEach(layer => {
+                if(layer.visible === false) return;
+                applyCtx.save();
+
+                // Позиционирование на базе виртуального холста 1000х1000 с учетом адаптивных пропорций
+                const absX = (layer.x / 1000) * applyCanvas.width;
+                const absY = (layer.y / 1000) * applyCanvas.height;
+
+                applyCtx.translate(absX, absY);
+                applyCtx.rotate((layer.rotate * Math.PI) / 180);
+                applyCtx.filter = `brightness(${layer.brightness}%) saturate(${layer.saturation}%) hue-rotate(${layer.hue}deg)`;
+                applyCtx.globalAlpha = layer.opacity / 100;
+                applyCtx.globalCompositeOperation = layer.blendMode || 'source-over';
+
+                let w = 0, h = 0;
+                if(layer.type === 'text') {
+                    const fontSize = Math.round((applyCanvas.width * 0.05) * (layer.scale / 100));
+                    applyCtx.font = `bold ${fontSize}px sans-serif`;
+                    w = applyCtx.measureText(layer.text).width + 20;
+                    h = fontSize + 20;
+
+                    applyCtx.fillStyle = '#ffffff';
+                    applyCtx.textBaseline = 'middle';
+                    applyCtx.textAlign = 'center';
+                    applyCtx.shadowColor = 'rgba(0, 0, 0, 0.5)';
+                    applyCtx.shadowBlur = applyCanvas.width * 0.008;
+                    applyCtx.fillText(layer.text, 0, 0);
+                } else {
+                    const aspect = layer.origH / layer.origW;
+                    w = applyCanvas.width * (layer.scale / 100);
+                    h = w * aspect;
+                    applyCtx.drawImage(layer.img, -w/2, -h/2, w, h);
+                }
+
+                if(selectedLayer && selectedLayer.id === layer.id) {
+                    applyCtx.filter = 'none';
+                    applyCtx.globalAlpha = 1.0;
+                    applyCtx.globalCompositeOperation = 'source-over';
+                    applyCtx.strokeStyle = varColor('--accent-color');
+                    applyCtx.lineWidth = Math.max(2, applyCanvas.width * 0.004);
+                    applyCtx.shadowBlur = 0;
+                    applyCtx.strokeRect(-w/2, -h/2, w, h);
+
+                    // Угловые ручки масштаба
+                    applyCtx.fillStyle = '#ffffff';
+                    const handleSz = Math.max(12, applyCanvas.width * 0.024);
+                    const corners = [{x: -w/2, y: -h/2}, {x: w/2, y: -h/2}, {x: w/2, y: h/2}, {x: -w/2, y: h/2}];
+                    corners.forEach(c => {
+                        applyCtx.fillRect(c.x - handleSz/2, c.y - handleSz/2, handleSz, handleSz);
+                        applyCtx.strokeRect(c.x - handleSz/2, c.y - handleSz/2, handleSz, handleSz);
+                    });
+
+                    // Ручка поворота — круг над верхней серединой
+                    const rotOffset = handleSz * 2.5;
+                    const rotHY = -h/2 - rotOffset;
+                    applyCtx.beginPath();
+                    applyCtx.moveTo(0, -h/2);
+                    applyCtx.lineTo(0, rotHY);
+                    applyCtx.strokeStyle = varColor('--accent-color');
+                    applyCtx.lineWidth = Math.max(1, applyCanvas.width * 0.002);
+                    applyCtx.stroke();
+                    applyCtx.beginPath();
+                    applyCtx.arc(0, rotHY, handleSz / 2, 0, Math.PI * 2);
+                    applyCtx.fillStyle = '#4caf50';
+                    applyCtx.fill();
+                    applyCtx.strokeStyle = '#fff';
+                    applyCtx.lineWidth = Math.max(1, applyCanvas.width * 0.002);
+                    applyCtx.stroke();
+                }
+
+                applyCtx.restore();
+            });
+        }
+
+        function startDragApply(e) {
+            const activeLayers = getCurrentActiveLayers();
+            if(activeLayers.length === 0) { selectApplyLayer(null); return; }
+
+            const { px: clickX, py: clickY, vx: clickVX, vy: clickVY } = screenToVirtual(e.clientX, e.clientY);
+
+            const handleSz = Math.max(12, applyCanvas.width * 0.024);
+
+            if(selectedLayer) {
+                const absX = (selectedLayer.x / 1000) * applyCanvas.width;
+                const absY = (selectedLayer.y / 1000) * applyCanvas.height;
+
+                let w = 0, h = 0;
+                if(selectedLayer.type === 'text') {
+                    const fontSize = Math.round((applyCanvas.width * 0.05) * (selectedLayer.scale / 100));
+                    applyCtx.font = `bold ${fontSize}px sans-serif`;
+                    w = applyCtx.measureText(selectedLayer.text).width + 20;
+                    h = fontSize + 20;
+                } else {
+                    const aspect = selectedLayer.origH / selectedLayer.origW;
+                    w = applyCanvas.width * (selectedLayer.scale / 100);
+                    h = w * aspect;
+                }
+
+                const rad = (selectedLayer.rotate * Math.PI) / 180;
+
+                // Проверяем ручку поворота (зелёный круг над верхней серединой)
+                const rotOffset = handleSz * 2.5;
+                const localRotHX = 0, localRotHY = -(h/2 + rotOffset);
+                const rotHWorldX = absX + localRotHX * Math.cos(rad) - localRotHY * Math.sin(rad);
+                const rotHWorldY = absY + localRotHX * Math.sin(rad) + localRotHY * Math.cos(rad);
+                if (Math.hypot(clickX - rotHWorldX, clickY - rotHWorldY) <= handleSz) {
+                    dragMode = 'rotate';
+                    startAngle = Math.atan2(clickY - absY, clickX - absX);
+                    startRotate = selectedLayer.rotate;
+                    return;
+                }
+
+                // Проверяем угловые ручки масштаба
+                const corners = [{x: -w/2, y: -h/2}, {x: w/2, y: -h/2}, {x: w/2, y: h/2}, {x: -w/2, y: h/2}];
+                for(let i=0; i<corners.length; i++) {
+                    const rotX = absX + corners[i].x * Math.cos(rad) - corners[i].y * Math.sin(rad);
+                    const rotY = absY + corners[i].x * Math.sin(rad) + corners[i].y * Math.cos(rad);
+                    if(Math.abs(clickX - rotX) <= handleSz && Math.abs(clickY - rotY) <= handleSz) {
+                        dragMode = 'resize';
+                        activeHandle = i;
+                        startX = clickX; startY = clickY;
+                        startScale = selectedLayer.scale;
+                        return;
+                    }
+                }
+            }
+
+            let hit = false;
+            for(let i = activeLayers.length - 1; i >= 0; i--) {
+                const layer = activeLayers[i];
+                if(layer.visible === false) continue;
+
+                const absX = (layer.x / 1000) * applyCanvas.width;
+                const absY = (layer.y / 1000) * applyCanvas.height;
+
+                let w = 0, h = 0;
+                if(layer.type === 'text') {
+                    const fontSize = Math.round((applyCanvas.width * 0.05) * (layer.scale / 100));
+                    applyCtx.font = `bold ${fontSize}px sans-serif`;
+                    w = applyCtx.measureText(layer.text).width + 20;
+                    h = fontSize + 20;
+                } else {
+                    const aspect = layer.origH / layer.origW;
+                    w = applyCanvas.width * (layer.scale / 100);
+                    h = w * aspect;
+                }
+
+                const dx = clickX - absX;
+                const dy = clickY - absY;
+                const rad = (-layer.rotate * Math.PI) / 180;
+                const localX = dx * Math.cos(rad) - dy * Math.sin(rad);
+                const localY = dx * Math.sin(rad) + dy * Math.cos(rad);
+
+                if (localX >= -w/2 && localX <= w/2 && localY >= -h/2 && localY <= h/2) {
+                    selectApplyLayer(layer);
+                    dragMode = 'move';
+                    startX = clickVX - layer.x;
+                    startY = clickVY - layer.y;
+                    hit = true;
+                    break;
+                }
+            }
+            if(!hit) selectApplyLayer(null);
+        }
+
+        function dragApply(e) {
+            if(!dragMode || !selectedLayer) return;
+            const { px: currentX, py: currentY, vx: currentVX, vy: currentVY } = screenToVirtual(e.clientX, e.clientY);
+
+            const absX = (selectedLayer.x / 1000) * applyCanvas.width;
+            const absY = (selectedLayer.y / 1000) * applyCanvas.height;
+
+            if (dragMode === 'move') {
+                selectedLayer.x = Math.round(currentVX - startX);
+                selectedLayer.y = Math.round(currentVY - startY);
+            } else if (dragMode === 'resize') {
+                const distStart = Math.hypot(startX - absX, startY - absY);
+                const distCurrent = Math.hypot(currentX - absX, currentY - absY);
+                let newScale = startScale * (distCurrent / distStart);
+                selectedLayer.scale = Math.round(Math.max(5, Math.min(300, newScale)));
+                document.getElementById('ap-scale').value = selectedLayer.scale;
+                updateApplyLabels();
+            } else if (dragMode === 'rotate') {
+                const currentAngle = Math.atan2(currentY - absY, currentX - absX);
+                const delta = (currentAngle - startAngle) * 180 / Math.PI;
+                selectedLayer.rotate = ((startRotate + delta) % 360 + 360) % 360;
+                document.getElementById('ap-rotate').value = Math.round(selectedLayer.rotate);
+                updateApplyLabels();
+            }
+            drawApply();
+        }
+
+        function endDragApply() {
+            dragMode = null;
+            activeHandle = null;
+        }
+
+        function selectApplyLayer(layer) {
+            selectedLayer = layer;
+            const panel = document.getElementById('apply-props-panel');
+            if(layer) {
+                panel.style.display = 'flex';
+                document.getElementById('ap-scale').value = layer.scale;
+                document.getElementById('ap-rotate').value = layer.rotate;
+                document.getElementById('ap-opacity').value = layer.opacity;
+                document.getElementById('ap-bright').value = layer.brightness;
+                document.getElementById('ap-sat').value = layer.saturation;
+                document.getElementById('ap-hue').value = layer.hue;
+                document.getElementById('ap-blend').value = layer.blendMode || 'source-over';
+                updateApplyLabels();
+            } else {
+                panel.style.display = 'none';
+            }
+            drawApply();
+        }
+
+        function updateApplyLayer(prop, value) {
+            if(!selectedLayer) return;
+            selectedLayer[prop] = parseInt(value);
+            updateApplyLabels();
+            drawApply();
+        }
+
+        function updateApplyLabels() {
+            if(!selectedLayer) return;
+            document.getElementById('aval-scale').innerText = selectedLayer.scale + '%';
+            document.getElementById('aval-rotate').innerText = selectedLayer.rotate + '°';
+            document.getElementById('aval-opacity').innerText = selectedLayer.opacity + '%';
+            document.getElementById('aval-bright').innerText = selectedLayer.brightness + '%';
+            document.getElementById('aval-sat').innerText = selectedLayer.saturation + '%';
+            document.getElementById('aval-hue').innerText = selectedLayer.hue + '°';
+        }
+
+        function closeApplySheets() {
+            document.getElementById('apply-blocker').style.display = 'none';
+            document.getElementById('sheet-saved-wtm').classList.remove('open');
+            document.getElementById('sheet-layers').classList.remove('open');
+        }
+
+        function openSavedWtmSheet() {
+            document.getElementById('apply-blocker').style.display = 'block';
+            const sheet = document.getElementById('sheet-saved-wtm');
+            sheet.classList.add('open');
+
+            const listCont = document.getElementById('saved-wtm-list');
+            listCont.innerHTML = '';
+            const savedItems = getInstalledWatermarks();
+
+            if(savedItems.length === 0) {
+                listCont.innerHTML = `<p style="opacity:0.5; padding:10px; text-align:center;">Нет сохраненных шаблонов</p>`;
+                return;
+            }
+
+            savedItems.forEach(item => {
+                const row = document.createElement('div');
+                row.className = 'list-item-row';
+                row.innerHTML = `<strong>${item.name}</strong>`;
+                
+                const btn = document.createElement('button');
+                btn.className = 'btn btn-primary btn-sm';
+                btn.innerText = 'Выбрать';
+                btn.onclick = () => {
+                    importSavedWtmPreset(item.layers);
+                    closeApplySheets();
+                };
+                row.appendChild(btn);
+                listCont.appendChild(row);
+            });
+        }
+
+        function importSavedWtmPreset(presetLayers) {
+            const targetList = getCurrentActiveLayers();
+            let loadedCount = 0;
+
+            if(presetLayers.length === 0) return;
+
+            presetLayers.forEach((l, i) => {
+                const newLayer = { ...l, id: Date.now() + '_' + i + '_' + Math.random() };
+                if(l.type === 'image') {
+                    const img = new Image();
+                    img.onload = function() {
+                        newLayer.img = img;
+                        targetList.push(newLayer);
+                        loadedCount++;
+                        if(loadedCount === presetLayers.length) { selectApplyLayer(newLayer); drawApply(); }
+                    };
+                    img.src = l.imgDataUrl;
+                } else {
+                    targetList.push(newLayer);
+                    loadedCount++;
+                    if(loadedCount === presetLayers.length) { selectApplyLayer(newLayer); drawApply(); }
+                }
+            });
+        }
+
+        function addExternalImageWtm(event) {
+            const file = event.target.files[0];
+            if(!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const img = new Image();
+                img.onload = function() {
+                    const targetList = getCurrentActiveLayers();
+                    const layer = {
+                        id: Date.now() + '_' + Math.random(),
+                        type: 'image',
+                        img: img,
+                        x: 500, 
+                        y: 500,
+                        origW: img.width,
+                        origH: img.height,
+                        scale: 30,
+                        rotate: 0,
+                        opacity: 100,
+                        brightness: 100,
+                        saturation: 100,
+                        hue: 0,
+                        visible: true
+                    };
+                    targetList.push(layer);
+                    selectApplyLayer(layer);
+                    drawApply();
+                };
+                img.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
+            event.target.value = '';
+        }
+
+        function openLayersSheet() {
+            document.getElementById('apply-blocker').style.display = 'block';
+            document.getElementById('sheet-layers').classList.add('open');
+            buildLayersListUI();
+        }
+
+        function buildLayersListUI() {
+            const container = document.getElementById('apply-layers-list');
+            container.innerHTML = '';
+            const activeLayers = getCurrentActiveLayers();
+
+            if(activeLayers.length === 0) {
+                container.innerHTML = `<p style="opacity:0.5; padding:10px; text-align:center;">Слои отсутствуют</p>`;
+                return;
+            }
+
+            for(let i = activeLayers.length - 1; i >= 0; i--) {
+                const layer = activeLayers[i];
+                const row = document.createElement('div');
+                row.className = 'list-item-row';
+                
+                const title = layer.type === 'text' ? `Текст: "${layer.text}"` : 'Картинка';
+                row.innerHTML = `<span style="${layer.visible ? '' : 'text-decoration:line-through; opacity:0.5;'}">${title}</span>`;
+
+                const actions = document.createElement('div');
+                actions.className = 'list-item-actions';
+
+                const btnVis = document.createElement('button');
+                btnVis.className = 'btn btn-sm';
+                btnVis.innerText = layer.visible ? '👁️' : '🕶️';
+                btnVis.onclick = () => {
+                    layer.visible = !layer.visible;
+                    if(selectedLayer && selectedLayer.id === layer.id) selectApplyLayer(null);
+                    buildLayersListUI();
+                    drawApply();
+                };
+
+                const btnUp = document.createElement('button');
+                btnUp.className = 'btn btn-sm';
+                btnUp.innerText = '▲';
+                btnUp.disabled = (i === activeLayers.length - 1);
+                btnUp.onclick = () => {
+                    activeLayers[i] = activeLayers[i+1];
+                    activeLayers[i+1] = layer;
+                    buildLayersListUI();
+                    drawApply();
+                };
+
+                const btnDel = document.createElement('button');
+                btnDel.className = 'btn btn-sm';
+                btnDel.style.backgroundColor = '#ff3b30';
+                btnDel.style.color = '#fff';
+                btnDel.innerText = '🗑️';
+                btnDel.onclick = () => {
+                    const updated = activeLayers.filter(l => l.id !== layer.id);
+                    if(!isEditStage) globalWtmLayers = updated;
+                    else bulkImages[currentBulkIndex].layers = updated;
+                    
+                    if(selectedLayer && selectedLayer.id === layer.id) selectApplyLayer(null);
+                    buildLayersListUI();
+                    drawApply();
+                };
+
+                actions.appendChild(btnVis);
+                actions.appendChild(btnUp);
+                actions.appendChild(btnDel);
+                row.appendChild(actions);
+                container.appendChild(row);
+            }
+        }
+
+        function handleApplyNext() {
+            if(!isEditStage) {
+                bulkImages.forEach(bImg => {
+                    bImg.layers = globalWtmLayers.map(l => {
+                        return { ...l, id: Date.now() + '_' + Math.random() };
+                    });
+                });
+
+                isEditStage = true;
+                selectApplyLayer(null);
+                
+                document.getElementById('apply-main-toolbar').style.display = 'none';
+                document.getElementById('apply-next-btn').innerText = appSettings.lang === 'ru' ? "Сохранить" : "Save All";
+                
+                selectBulkImage(0);
+                alert(appSettings.lang === 'ru' ? "Теперь вы можете скорректировать или удалить знаки на конкретных фото. По завершении нажмите кнопку сохранения." : "Now you can adjust or delete watermarks on specific photos. When done, press save.");
+            } else {
+                executeFinalBatchRender();
+            }
+        }
+
+        function executeFinalBatchRender() {
+            const renderCanvas = document.createElement('canvas');
+            const renderCtx = renderCanvas.getContext('2d');
+
+            bulkImages.forEach((bImg, idx) => {
+                renderCanvas.width = bImg.img.width;
+                renderCanvas.height = bImg.img.height;
+
+                renderCtx.drawImage(bImg.img, 0, 0, renderCanvas.width, renderCanvas.height);
+
+                bImg.layers.forEach(layer => {
+                    if(layer.visible === false) return;
+                    renderCtx.save();
+
+                    const absX = (layer.x / 1000) * renderCanvas.width;
+                    const absY = (layer.y / 1000) * renderCanvas.height;
+
+                    renderCtx.translate(absX, absY);
+                    renderCtx.rotate((layer.rotate * Math.PI) / 180);
+                    renderCtx.filter = `brightness(${layer.brightness}%) saturate(${layer.saturation}%) hue-rotate(${layer.hue}deg)`;
+                    renderCtx.globalAlpha = layer.opacity / 100;
+
+                    if(layer.type === 'text') {
+                        const fontSize = Math.round((renderCanvas.width * 0.05) * (layer.scale / 100));
+                        renderCtx.font = `bold ${fontSize}px sans-serif`;
+                        renderCtx.fillStyle = '#ffffff';
+                        renderCtx.textBaseline = 'middle';
+                        renderCtx.textAlign = 'center';
+                        renderCtx.shadowColor = 'rgba(0, 0, 0, 0.5)';
+                        renderCtx.shadowBlur = renderCanvas.width * 0.008;
+                        renderCtx.fillText(layer.text, 0, 0);
+                    } else {
+                        const aspect = layer.origH / layer.origW;
+                        const w = renderCanvas.width * (layer.scale / 100);
+                        const h = w * aspect;
+                        renderCtx.drawImage(layer.img, -w/2, -h/2, w, h);
+                    }
+                    renderCtx.restore();
+                });
+
+                // Формат определяется настройкой пользователя
+                const origExt = (bImg.ext && bImg.ext.length > 1) ? bImg.ext.toLowerCase() : '.png';
+                const fmt = appSettings.exportFormat || 'original';
+                let mimeType, fileExt;
+                if (fmt === 'jpg') {
+                    mimeType = 'image/jpeg'; fileExt = '.jpg';
+                } else if (fmt === 'png') {
+                    mimeType = 'image/png'; fileExt = '.png';
+                } else {
+                    // original
+                    fileExt = origExt;
+                    if (fileExt === '.jpg' || fileExt === '.jpeg') mimeType = 'image/jpeg';
+                    else if (fileExt === '.webp') mimeType = 'image/webp';
+                    else mimeType = 'image/png';
+                }
+
+                const finalName = parseFilenamePattern(appSettings.filenamePattern, idx + 1) + fileExt;
+                
+                const link = document.createElement('a');
+                link.download = finalName;
+                link.href = renderCanvas.toDataURL(mimeType, 0.95);
+                link.click();
+            });
+
+            alert(appSettings.lang === 'ru' ? "Все изображения успешно обработаны и сохранены!" : "All images processed and saved successfully!");
+            resetApplyState();
+            navigateTo('menu-screen');
+        }
+
+        // Парсер шаблонов имён файлов
+        function parseFilenamePattern(pattern, number) {
+            let res = pattern ? pattern : "wtm_{n}{f}";
+            const now = new Date();
+            const dateTimeStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}-${String(now.getMinutes()).padStart(2,'0')}-${String(now.getSeconds()).padStart(2,'0')}`;
+            res = res.replace(/{n}/g, number);
+            res = res.replace(/{f}/g, dateTimeStr);
+            return res;
+        }
+
+        // --- ОСТАЛЬНЫЕ СИСТЕМНЫЕ МЕТОДЫ ---
+        function getInstalledWatermarks() {
+            const list = localStorage.getItem('watermaster_saved_items');
+            return list ? JSON.parse(list) : [];
+        }
+
+        function loadSettings() {
+            const saved = localStorage.getItem('watermaster_settings');
+            if (saved) {
+                try { appSettings = { ...appSettings, ...JSON.parse(saved) }; } catch(e) {}
+            }
+        }
+
+        function applyCurrentSettings() {
+            document.documentElement.setAttribute('data-theme', appSettings.theme);
+            document.getElementById('setting-theme').value = appSettings.theme;
+            document.getElementById('setting-filename').value = appSettings.filenamePattern;
+            document.getElementById('setting-lang').value = appSettings.lang;
+            document.getElementById('setting-format').value = appSettings.exportFormat || 'original';
+            updateInterfaceLanguage(appSettings.lang);
+        }
+
+        function changeTheme(themeName) {
+            appSettings.theme = themeName;
+            document.documentElement.setAttribute('data-theme', themeName);
+            saveToStorage();
+            draw();
+            drawApply();
+        }
+
+        function changeLanguage(langCode) {
+            appSettings.lang = langCode;
+            updateInterfaceLanguage(langCode);
+            saveToStorage();
+        }
+
+        function saveFilenamePattern(value) {
+            appSettings.filenamePattern = value || "wtm_{n}{f}";
+            saveToStorage();
+        }
+
+        function saveExportFormat(value) {
+            appSettings.exportFormat = value;
+            saveToStorage();
+        }
+
+        function saveToStorage() {
+            localStorage.setItem('watermaster_settings', JSON.stringify(appSettings));
+        }
+
+        function varColor(name) {
+            return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+        }
+
+        function updateInterfaceLanguage(lang) {
+            const dict = i18n[lang] || i18n.ru;
+            document.getElementById('loc-subtitle').innerText = dict.subtitle;
+            document.getElementById('loc-btn-create').innerText = dict.btnCreate;
+            document.getElementById('loc-btn-apply').innerText = dict.btnApply;
+            document.getElementById('loc-btn-settings').innerText = dict.btnSettings;
+            document.getElementById('loc-title-create').innerText = dict.titleCreate;
+            document.getElementById('loc-title-apply').innerText = dict.titleApply;
+            document.querySelectorAll('.header-back').forEach(btn => btn.innerText = dict.back);
+            document.getElementById('loc-settings-title').innerText = dict.settingsTitle;
+            document.getElementById('loc-lang-label').innerText = dict.langLabel;
+            document.getElementById('loc-theme-label').innerText = dict.themeLabel;
+            document.getElementById('loc-filename-label').innerText = dict.filenameLabel;
+            document.getElementById('loc-filename-warn').innerText = dict.filenameWarn;
+            document.getElementById('loc-filename-instruction').innerHTML = dict.filenameInst;
+            if (document.getElementById('loc-format-label')) document.getElementById('loc-format-label').innerText = dict.formatLabel;
+            if (document.getElementById('fmt-original')) document.getElementById('fmt-original').innerText = dict.fmtOriginal;
+            if (document.getElementById('fmt-png')) document.getElementById('fmt-png').innerText = dict.fmtPng;
+            if (document.getElementById('fmt-jpg')) document.getElementById('fmt-jpg').innerText = dict.fmtJpg;
+            document.getElementById('theme-light').innerText = dict.tLight;
+            document.getElementById('theme-dark').innerText = dict.tDark;
+            document.getElementById('theme-amoled').innerText = dict.tAmoled;
+            document.getElementById('g-red').label = dict.gRed; document.getElementById('g-orange').label = dict.gOrange; document.getElementById('g-yellow').label = dict.gYellow; document.getElementById('g-green').label = dict.gGreen; document.getElementById('g-lblue').label = dict.gLblue; document.getElementById('g-blue').label = dict.gBlue; document.getElementById('g-purple').label = dict.gPurple; document.getElementById('g-pink').label = dict.gPink;
+            document.getElementById('theme-red-light').innerText = dict.tRedL; document.getElementById('theme-red-dark').innerText = dict.tRedD; document.getElementById('theme-orange-light').innerText = dict.tOrangeL; document.getElementById('theme-orange-dark').innerText = dict.tOrangeD; document.getElementById('theme-yellow-light').innerText = dict.tYellowL; document.getElementById('theme-yellow-dark').innerText = dict.tYellowD; document.getElementById('theme-green-light').innerText = dict.tGreenL; document.getElementById('theme-green-dark').innerText = dict.tGreenD; document.getElementById('theme-lblue-light').innerText = dict.tLblueL; document.getElementById('theme-lblue-dark').innerText = dict.tLblueD; document.getElementById('theme-blue-light').innerText = dict.tBlueL; document.getElementById('theme-blue-dark').innerText = dict.tBlueD; document.getElementById('theme-purple-light').innerText = dict.tPurpleL; document.getElementById('theme-purple-dark').innerText = dict.tPurpleD; document.getElementById('theme-pink-light').innerText = dict.tPinkL; document.getElementById('theme-pink-dark').innerText = dict.tPinkD;
+            
+            document.getElementById('loc-add-text').innerText = dict.addText;
+            document.getElementById('loc-add-img').innerText = dict.addImg;
+            document.getElementById('loc-btn-save-main').innerText = dict.saveMain;
+            document.getElementById('loc-p-scale').innerText = dict.pScale;
+            document.getElementById('loc-p-rotate').innerText = dict.pRotate;
+            document.getElementById('loc-p-opacity').innerText = dict.pOpacity;
+            document.getElementById('loc-p-bright').innerText = dict.pBright;
+            document.getElementById('loc-p-sat').innerText = dict.pSat;
+            document.getElementById('loc-p-hue').innerText = dict.pHue;
+            document.getElementById('loc-p-del').innerText = dict.pDel;
+
+            document.getElementById('loc-sheet-title').innerText = dict.sheetTitle;
+            document.getElementById('loc-sheet-name-lbl').innerText = dict.sheetNameLbl;
+            document.getElementById('loc-sheet-png').innerText = dict.sheetPng;
+            document.getElementById('loc-sheet-app').innerText = dict.sheetApp;
+            document.getElementById('loc-sheet-cancel').innerText = dict.sheetCancel;
+
+            document.getElementById('loc-upload-desc').innerText = dict.uploadDesc;
+            document.getElementById('loc-choose-files').innerText = dict.chooseFiles;
+            document.getElementById('loc-saved-wtm').innerText = dict.savedWtm;
+            document.getElementById('loc-file-wtm').innerText = dict.fileWtm;
+            document.getElementById('loc-layers-lbl').innerText = dict.layersLbl;
+            document.getElementById('loc-saved-title').innerText = dict.savedTitle;
+            document.getElementById('loc-layers-title').innerText = dict.layersTitle;
+
+            document.getElementById('loc-ap-scale').innerText = dict.pScale;
+            document.getElementById('loc-ap-rotate').innerText = dict.pRotate;
+            document.getElementById('loc-ap-opacity').innerText = dict.pOpacity;
+            document.getElementById('loc-ap-bright').innerText = dict.pBright;
+            document.getElementById('loc-ap-sat').innerText = dict.pSat;
+            document.getElementById('loc-ap-hue').innerText = dict.pHue;
+        }
+    </script>
+</body>
+</html>
