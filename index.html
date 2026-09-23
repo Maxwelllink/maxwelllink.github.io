@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>Watermaster</title>
+    <!-- [ИЗМЕНЕНО] Добавлена библиотека JSZip для создания архивов -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <style>
         /* --- ЦВЕТОВЫЕ ПАЛИТРЫ (ТЕМЫ) --- */
         :root {
@@ -162,6 +164,11 @@
             opacity: 0.9;
         }
 
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
         .btn-primary {
             background-color: var(--accent-color);
             color: #ffffff;
@@ -209,7 +216,6 @@
             overflow: hidden;
         }
 
-        /* Apply-холст управляется через JS, flex не нужен */
         #apply-canvas-holder {
             display: block;
         }
@@ -225,7 +231,6 @@
         #apply-canvas {
             display: block;
             border-radius: 6px;
-            /* Размер управляется через JS (style.width/height) */
         }
 
         #apply-canvas-viewport {
@@ -302,7 +307,6 @@
             font-family: monospace;
         }
 
-        /* Блокировщик интерфейса при сохранении */
         .screen-blocker {
             position: absolute;
             top: 0;
@@ -315,7 +319,6 @@
             display: none;
         }
 
-        /* Шторка сохранения и листов */
         .save-modal-sheet {
             position: absolute;
             bottom: 0;
@@ -331,7 +334,7 @@
             display: flex;
             flex-direction: column;
             gap: 16px;
-            max-height: 80%;
+            max-height: 90%;
             overflow-y: auto;
         }
 
@@ -438,7 +441,6 @@
             transform: scale(1.05);
         }
 
-        /* Списки в листах шторки */
         .list-item-row {
             display: flex;
             align-items: center;
@@ -451,6 +453,111 @@
         .list-item-actions {
             display: flex;
             gap: 8px;
+        }
+
+        /* [ИЗМЕНЕНО] Стили для превью экспорта */
+        .export-preview-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+            gap: 12px;
+            padding: 10px 0;
+        }
+
+        .preview-card {
+            background-color: var(--bg-color);
+            border-radius: 12px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            border: 1px solid var(--border-color);
+        }
+
+        .preview-card img {
+            width: 100%;
+            aspect-ratio: 1;
+            object-fit: cover;
+            background: #000;
+        }
+
+        .preview-card-info {
+            padding: 6px 8px;
+            font-size: 11px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .preview-card-name {
+            font-weight: 600;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            color: var(--text-color);
+        }
+
+        .preview-card-size {
+            opacity: 0.6;
+            font-size: 10px;
+        }
+
+        .preview-card-actions {
+            display: flex;
+            gap: 4px;
+            padding: 6px;
+            padding-top: 0;
+        }
+
+        .preview-card-actions .btn {
+            padding: 6px;
+            font-size: 12px;
+            flex: 1;
+        }
+
+        .export-bottom-actions {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            padding-top: 12px;
+            border-top: 1px solid var(--border-color);
+        }
+
+        .export-bottom-actions .btn-row {
+            display: flex;
+            gap: 10px;
+        }
+
+        .export-bottom-actions .btn-row .btn {
+            flex: 1;
+        }
+
+        .export-counter {
+            text-align: center;
+            font-size: 14px;
+            font-weight: 600;
+            opacity: 0.7;
+            margin-bottom: 10px;
+        }
+
+        .render-progress {
+            text-align: center;
+            padding: 30px;
+            font-size: 14px;
+            opacity: 0.7;
+        }
+
+        .render-progress-spinner {
+            display: inline-block;
+            width: 24px;
+            height: 24px;
+            border: 3px solid var(--border-color);
+            border-top-color: var(--accent-color);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 10px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
         }
     </style>
 </head>
@@ -659,6 +766,20 @@
             <div id="apply-layers-list" style="max-height:300px; overflow-y:auto;"></div>
             <button class="btn btn-secondary" onclick="closeApplySheets()">Закрыть</button>
         </div>
+
+        <!-- [ИЗМЕНЕНО] Новая шторка превью экспорта -->
+        <div class="save-modal-sheet" id="sheet-export-preview">
+            <div class="save-modal-title" id="loc-export-title">Результаты обработки</div>
+            <div class="export-counter" id="export-counter"></div>
+            <div id="export-preview-content"></div>
+            <div class="export-bottom-actions" id="export-bottom-actions">
+                <div class="btn-row">
+                    <button class="btn btn-primary" onclick="saveAllFiles()"><span id="loc-export-save-all">💾 Сохранить всё</span></button>
+                    <button class="btn" onclick="saveAsZip()"><span id="loc-export-save-zip">📦 В архив</span></button>
+                </div>
+                <button class="btn btn-secondary" onclick="closeExportPreview()"><span id="loc-export-cancel">Закрыть</span></button>
+            </div>
+        </div>
     </div>
 
     <div id="settings-screen" class="screen">
@@ -729,7 +850,10 @@
                 tLight: "Светлая", tDark: "Тёмная", tAmoled: "AMOLED (Чёрная)", gRed: "Красная", tRedL: "Красная (Светлая)", tRedD: "Красная (Тёмная)", gOrange: "Оранжевая", tOrangeL: "Оранжевая (Светлая)", tOrangeD: "Оранжевая (Тёмная)", gYellow: "Жёлтая", tYellowL: "Жёлтая (Светлая)", tYellowD: "Жёлтая (Тёмная)", gGreen: "Зелёная", tGreenL: "Зелёная (Светлая)", tGreenD: "Зелёная (Тёмная)", gLblue: "Голубая", tLblueL: "Голубая (Светлая)", tLblueD: "Голубая (Тёмная)", gBlue: "Синяя", tBlueL: "Синяя (Светлая)", tBlueD: "Синяя (Тёмная)", gPurple: "Фиолетовая", tPurpleL: "Фиолетовая (Светлая)", tPurpleD: "Фиолетовая (Тёмная)", gPink: "Розовая", tPinkL: "Розовая (Светлая)", tPinkD: "Розовая (Тёмная)",
                 addText: "Текст", addImg: "Картинка", saveMain: "Сохранить", pScale: "Размер", pRotate: "Поворот", pOpacity: "Прозрачность", pBright: "Яркость", pSat: "Насыщенность", pHue: "Оттенок", pDel: "Удалить слой", promptText: "Введите текст водяного знака:",
                 sheetTitle: "Сохранение водяного знака", sheetNameLbl: "Название файла / шаблона", sheetPng: "Скачать как .PNG", sheetApp: "Сохранить в приложении", sheetCancel: "Отмена",
-                uploadDesc: "Выберите одно или несколько изображений со своего устройства для пакетного наложения.", chooseFiles: "Выбрать изображения", savedWtm: "Готовые ВЗ", fileWtm: "Изображение", layersLbl: "Слои", savedTitle: "Выберите сохранённый знак", layersTitle: "Слои водяного знака"
+                uploadDesc: "Выберите одно или несколько изображений со своего устройства для пакетного наложения.", chooseFiles: "Выбрать изображения", savedWtm: "Готовые ВЗ", fileWtm: "Изображение", layersLbl: "Слои", savedTitle: "Выберите сохранённый знак", layersTitle: "Слои водяного знака",
+                // [ИЗМЕНЕНО] Новые строки локализации для превью экспорта
+                exportTitle: "Результаты обработки", exportSaveAll: "💾 Сохранить всё", exportSaveZip: "📦 В архив", exportCancel: "Закрыть", exportCounter: "Готово файлов: {n}", exportRenderProgress: "Обработка изображений...", exportEmpty: "Нет файлов для сохранения",
+                exportFileSaved: "Файл сохранён", exportAllSaved: "Все файлы сохранены!", exportZipSaved: "Архив сохранён!", exportNoFiles: "Нет файлов для сохранения", exportZipError: "Ошибка при создании архива"
             },
             en: {
                 subtitle: "Batch Watermarking Application", btnCreate: "Create Watermark", btnApply: "Apply Watermark", btnSettings: "Settings", back: "◀ Back", titleCreate: "Create", titleApply: "Apply", settingsTitle: "Settings", langLabel: "Language", themeLabel: "App Theme", filenameLabel: "Filename Template", filenameWarn: "Do not modify if you don't know what it is!", filenameInst: "Instruction:<br>{n} — sequential number<br>{f} — current date and time",
@@ -737,7 +861,10 @@
                 tLight: "Light", tDark: "Dark", tAmoled: "AMOLED (Black)", gRed: "Red", tRedL: "Red (Light)", tRedD: "Red (Dark)", gOrange: "Orange", tOrangeL: "Orange (Light)", tOrangeD: "Orange (Dark)", gYellow: "Yellow", tYellowL: "Yellow (Light)", tYellowD: "Yellow (Dark)", gGreen: "Green", tGreenL: "Green (Light)", tGreenD: "Green (Dark)", gLblue: "Light Blue", tLblueL: "Light Blue (Light)", tLblueD: "Light Blue (Dark)", gBlue: "Blue", tBlueL: "Blue (Light)", tBlueD: "Blue (Dark)", gPurple: "Purple", tPurpleL: "Purple (Light)", tPurpleD: "Purple (Dark)", gPink: "Pink", tPinkL: "Pink (Light)", tPinkD: "Pink (Dark)",
                 addText: "Text", addImg: "Image", saveMain: "Save", pScale: "Size", pRotate: "Rotation", pOpacity: "Opacity", pBright: "Brightness", pSat: "Saturation", pHue: "Hue", pDel: "Delete Layer", promptText: "Enter watermark text:",
                 sheetTitle: "Save Watermark", sheetNameLbl: "Filename / Template Name", sheetPng: "Download as .PNG", sheetApp: "Save in Application", sheetCancel: "Cancel",
-                uploadDesc: "Select one or multiple images from your device for bulk watermarking.", chooseFiles: "Select Images", savedWtm: "Saved WM", fileWtm: "Image File", layersLbl: "Layers", savedTitle: "Select Saved Watermark", layersTitle: "Watermark Layers"
+                uploadDesc: "Select one or multiple images from your device for bulk watermarking.", chooseFiles: "Select Images", savedWtm: "Saved WM", fileWtm: "Image File", layersLbl: "Layers", savedTitle: "Select Saved Watermark", layersTitle: "Watermark Layers",
+                // [ИЗМЕНЕНО] Новые строки локализации для превью экспорта
+                exportTitle: "Processing Results", exportSaveAll: "💾 Save All", exportSaveZip: "📦 To Archive", exportCancel: "Close", exportCounter: "Files ready: {n}", exportRenderProgress: "Processing images...", exportEmpty: "No files to save",
+                exportFileSaved: "File saved", exportAllSaved: "All files saved!", exportZipSaved: "Archive saved!", exportNoFiles: "No files to save", exportZipError: "Error creating archive"
             }
         };
 
@@ -747,18 +874,20 @@
         let layers = [];
         let selectedLayer = null;
         
-        let dragMode = null; // 'move', 'resize' или 'rotate'
+        let dragMode = null;
         let activeHandle = null; 
         let startX, startY, startScale, startAngle, startRotate;
         const CANVAS_VIRTUAL_SIZE = 1000;
         const HANDLE_SIZE = 24; 
 
-        // СОСТОЯНИЕ ВКЛАДКИ НАЛОЖЕНИЯ (БАТЧ ИМПОРТ)
-        let bulkImages = []; // Массив объектов: { id, img, name, ext, layers: [] }
+        let bulkImages = [];
         let currentBulkIndex = 0; 
         let applyCanvas, applyCtx;
-        let globalWtmLayers = []; // Глобальный эталонный набор слоев для синхронизации
-        let isEditStage = false; // false - этап 1 (синхронное размещение), true - этап 2 (покадровое редактирование)
+        let globalWtmLayers = [];
+        let isEditStage = false;
+
+        // [ИЗМЕНЕНО] Хранилище готовых файлов для превью экспорта
+        let exportFiles = []; // { name, ext, mimeType, dataUrl, blob }
 
         window.addEventListener('DOMContentLoaded', () => {
             loadSettings();
@@ -843,18 +972,16 @@
         }
 
         function resizeCanvasElement() {
-            // Create-холст всегда квадратный
             const holder = document.getElementById('canvas-holder');
             if (holder) {
                 const size = holder.clientWidth;
                 canvas.style.width = size + 'px';
                 canvas.style.height = size + 'px';
             }
-            // Apply-холст: вписываем в контейнер, центрируем
             const applyHolder = document.getElementById('apply-canvas-holder');
             if (applyHolder && applyCanvas && applyCanvas.width > 0 && applyCanvas.height > 0) {
                 const cW = applyHolder.clientWidth;
-                const cH = applyHolder.clientHeight || cW; // fallback если layout ещё не случился
+                const cH = applyHolder.clientHeight || cW;
                 const aspect = applyCanvas.width / applyCanvas.height;
                 if (aspect >= cW / cH) {
                     applyCanvasBaseW = cW;
@@ -865,7 +992,6 @@
                 }
                 applyCanvas.style.width = applyCanvasBaseW + 'px';
                 applyCanvas.style.height = applyCanvasBaseH + 'px';
-                // Всегда пересчитываем центрирование при scale=1
                 vp.panX = (cW - applyCanvasBaseW) / 2;
                 vp.panY = (cH - applyCanvasBaseH) / 2;
                 applyViewportTransform();
@@ -873,7 +999,6 @@
         }
         window.addEventListener('resize', resizeCanvasElement);
 
-        // --- УПРАВЛЕНИЕ ШТОРКОЙ СОХРАНЕНИЯ ШАБЛОНОВ ---
         function openSaveSheet() {
             const nextIndex = getInstalledWatermarks().length + 1;
             document.getElementById('save-output-name').value = "Watermark_" + nextIndex;
@@ -920,7 +1045,6 @@
             navigateTo('menu-screen');
         }
 
-        // --- ЛОГИКА РЕДАКТОРА ШАБЛОНОВ ---
         function addTextLayerPrompt() {
             const dict = i18n[appSettings.lang];
             const text = prompt(dict.promptText, "Watermark");
@@ -1051,7 +1175,6 @@
             return { w, h };
         }
 
-        // --- РЕНДЕРИНГ ХОЛСТА ШАБЛОНОВ ---
         function draw() {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -1088,7 +1211,6 @@
                     ctx.shadowBlur = 0;
                     ctx.strokeRect(-w/2, -h/2, w, h);
 
-                    // Угловые ручки масштаба
                     ctx.fillStyle = '#ffffff';
                     const corners = [{x: -w/2, y: -h/2}, {x: w/2, y: -h/2}, {x: w/2, y: h/2}, {x: -w/2, y: h/2}];
                     corners.forEach(c => {
@@ -1096,7 +1218,6 @@
                         ctx.strokeRect(c.x - HANDLE_SIZE/2, c.y - HANDLE_SIZE/2, HANDLE_SIZE, HANDLE_SIZE);
                     });
 
-                    // Ручка поворота — круг над верхней серединой
                     const rotOffset = HANDLE_SIZE * 2.5;
                     const rotHY = -h/2 - rotOffset;
                     ctx.beginPath();
@@ -1117,26 +1238,20 @@
             });
         }
 
-        // --- ВЬЮПОРТ APPLY-ХОЛСТА ---
         let vp = { scale: 1, panX: 0, panY: 0 };
         let applyCanvasBaseW = 0, applyCanvasBaseH = 0;
 
-        // Экранные координаты → координаты в пространстве canvas (applyCanvas.width × applyCanvas.height)
-        // и в виртуальном пространстве (0..1000)
         function screenToVirtual(clientX, clientY) {
             const holder = document.getElementById('apply-canvas-holder');
             const rect = holder.getBoundingClientRect();
             const cx = clientX - rect.left;
             const cy = clientY - rect.top;
-            // CSS-пиксели внутри canvas (при scale=1 canvas занимает applyCanvasBaseW×applyCanvasBaseH)
             const cssPx = (cx - vp.panX) / vp.scale;
             const cssPy = (cy - vp.panY) / vp.scale;
-            // canvas-пиксели (то, что используют drawApply и hit-test)
             const px = applyCanvasBaseW > 0 ? (cssPx / applyCanvasBaseW) * applyCanvas.width : 0;
             const py = applyCanvasBaseH > 0 ? (cssPy / applyCanvasBaseH) * applyCanvas.height : 0;
             return {
-                px,  // canvas-пиксели (для hit-test)
-                py,
+                px, py,
                 vx: applyCanvas.width > 0 ? (px / applyCanvas.width) * 1000 : 0,
                 vy: applyCanvas.height > 0 ? (py / applyCanvas.height) * 1000 : 0
             };
@@ -1147,7 +1262,6 @@
             if (vport) vport.style.transform = `translate(${vp.panX}px,${vp.panY}px) scale(${vp.scale})`;
         }
 
-        // Пересчёт canvas-пикселей в экранные пиксели (для hit-test)
         function virtualToCanvasPixel(vx, vy) {
             return {
                 px: applyCanvasBaseW > 0 ? (vx / 1000) * applyCanvasBaseW : 0,
@@ -1155,11 +1269,9 @@
             };
         }
 
-        // --- ПИНЧ-ЗУМ И ПАН ---
         let pinchStartDist = 0;
         let pinchStartVpScale = 1, pinchStartPanX = 0, pinchStartPanY = 0;
         let pinchStartMidX = 0, pinchStartMidY = 0;
-        let pinchCurMidX = 0, pinchCurMidY = 0;
 
         function getTouchDist(e) {
             return Math.hypot(e.touches[1].clientX - e.touches[0].clientX, e.touches[1].clientY - e.touches[0].clientY);
@@ -1182,8 +1294,6 @@
             const mid = getTouchMid(e);
             pinchStartMidX = mid.x;
             pinchStartMidY = mid.y;
-            pinchCurMidX = mid.x;
-            pinchCurMidY = mid.y;
         }
 
         function pinchMoveApply(e) {
@@ -1193,7 +1303,6 @@
             const ratio = dist / pinchStartDist;
             const newScale = Math.max(0.3, Math.min(10, pinchStartVpScale * ratio));
 
-            // Зум относительно начальной средней точки + учёт пана средней точки
             const panDx = mid.x - pinchStartMidX;
             const panDy = mid.y - pinchStartMidY;
 
@@ -1215,7 +1324,6 @@
                 const { w, h } = getLayerSize(selectedLayer, CANVAS_VIRTUAL_SIZE);
                 const rad = (selectedLayer.rotate * Math.PI) / 180;
 
-                // Ручка поворота
                 const rotOffset = HANDLE_SIZE * 2.5;
                 const localRotHY = -(h/2 + rotOffset);
                 const rotHWorldX = selectedLayer.x - localRotHY * Math.sin(rad);
@@ -1227,7 +1335,6 @@
                     return;
                 }
 
-                // Угловые ручки масштаба
                 const corners = [{x: -w/2, y: -h/2}, {x: w/2, y: -h/2}, {x: w/2, y: h/2}, {x: -w/2, y: h/2}];
                 for (let i = 0; i < corners.length; i++) {
                     const rotX = selectedLayer.x + corners[i].x * Math.cos(rad) - corners[i].y * Math.sin(rad);
@@ -1301,7 +1408,6 @@
             activeHandle = null;
         }
 
-        // --- МОДУЛЬ ПАКЕТНОГО НАЛОЖЕНИЯ (APPLY SCREEN) ---
         function resetApplyState() {
             bulkImages = [];
             globalWtmLayers = [];
@@ -1309,6 +1415,7 @@
             selectedLayer = null;
             isEditStage = false;
             dragMode = null;
+            exportFiles = []; // [ИЗМЕНЕНО] Сброс превью экспорта
 
             document.getElementById('apply-upload-state').style.display = 'flex';
             document.getElementById('apply-editor-state').style.display = 'none';
@@ -1316,14 +1423,17 @@
             document.getElementById('apply-main-toolbar').style.display = 'flex';
             document.getElementById('apply-next-btn').innerText = appSettings.lang === 'ru' ? "Далее" : "Next";
             closeApplySheets();
+            closeExportPreview(); // [ИЗМЕНЕНО]
         }
 
+        /* [ИЗМЕНЕНО] Функция загрузки с сохранением исходного порядка выбора */
         function loadBulkImages(event) {
             const files = Array.from(event.target.files);
             if(files.length === 0) return;
 
             let loadedCount = 0;
-            bulkImages = [];
+            // Предварительно выделяем массив нужного размера, чтобы порядок был детерминирован
+            const orderedImages = new Array(files.length);
 
             files.forEach((file, idx) => {
                 const reader = new FileReader();
@@ -1334,17 +1444,27 @@
                         const name = dotIndex !== -1 ? file.name.substring(0, dotIndex) : file.name;
                         const ext = dotIndex !== -1 ? file.name.substring(dotIndex) : '.png';
 
-                        bulkImages.push({
+                        // Кладём в массив именно на позицию idx, а не в push
+                        orderedImages[idx] = {
                             id: Date.now() + '_' + idx,
                             img: img,
                             name: name,
                             ext: ext,
                             layers: [] 
-                        });
+                        };
 
                         loadedCount++;
                         if(loadedCount === files.length) {
+                            bulkImages = orderedImages;
                             startApplyEditor();
+                        }
+                    };
+                    img.onerror = function() {
+                        // Если файл не загрузился - пропускаем его, но счётчик увеличиваем
+                        loadedCount++;
+                        if(loadedCount === files.length) {
+                            bulkImages = orderedImages.filter(Boolean);
+                            if (bulkImages.length > 0) startApplyEditor();
                         }
                     };
                     img.src = e.target.result;
@@ -1417,7 +1537,6 @@
                 if(layer.visible === false) return;
                 applyCtx.save();
 
-                // Позиционирование на базе виртуального холста 1000х1000 с учетом адаптивных пропорций
                 const absX = (layer.x / 1000) * applyCanvas.width;
                 const absY = (layer.y / 1000) * applyCanvas.height;
 
@@ -1456,7 +1575,6 @@
                     applyCtx.shadowBlur = 0;
                     applyCtx.strokeRect(-w/2, -h/2, w, h);
 
-                    // Угловые ручки масштаба
                     applyCtx.fillStyle = '#ffffff';
                     const handleSz = Math.max(12, applyCanvas.width * 0.024);
                     const corners = [{x: -w/2, y: -h/2}, {x: w/2, y: -h/2}, {x: w/2, y: h/2}, {x: -w/2, y: h/2}];
@@ -1465,7 +1583,6 @@
                         applyCtx.strokeRect(c.x - handleSz/2, c.y - handleSz/2, handleSz, handleSz);
                     });
 
-                    // Ручка поворота — круг над верхней серединой
                     const rotOffset = handleSz * 2.5;
                     const rotHY = -h/2 - rotOffset;
                     applyCtx.beginPath();
@@ -1513,7 +1630,6 @@
 
                 const rad = (selectedLayer.rotate * Math.PI) / 180;
 
-                // Проверяем ручку поворота (зелёный круг над верхней серединой)
                 const rotOffset = handleSz * 2.5;
                 const localRotHX = 0, localRotHY = -(h/2 + rotOffset);
                 const rotHWorldX = absX + localRotHX * Math.cos(rad) - localRotHY * Math.sin(rad);
@@ -1525,7 +1641,6 @@
                     return;
                 }
 
-                // Проверяем угловые ручки масштаба
                 const corners = [{x: -w/2, y: -h/2}, {x: w/2, y: -h/2}, {x: w/2, y: h/2}, {x: -w/2, y: h/2}];
                 for(let i=0; i<corners.length; i++) {
                     const rotX = absX + corners[i].x * Math.cos(rad) - corners[i].y * Math.sin(rad);
@@ -1831,15 +1946,17 @@
                 selectBulkImage(0);
                 alert(appSettings.lang === 'ru' ? "Теперь вы можете скорректировать или удалить знаки на конкретных фото. По завершении нажмите кнопку сохранения." : "Now you can adjust or delete watermarks on specific photos. When done, press save.");
             } else {
-                executeFinalBatchRender();
+                // [ИЗМЕНЕНО] Теперь показываем превью, а не сразу скачиваем
+                showExportPreview();
             }
         }
 
-        function executeFinalBatchRender() {
-            const renderCanvas = document.createElement('canvas');
-            const renderCtx = renderCanvas.getContext('2d');
+        /* [ИЗМЕНЕНО] Рендеринг одного изображения в Blob (асинхронно) */
+        function renderBulkImageToBlob(bImg, mimeType, quality) {
+            return new Promise((resolve) => {
+                const renderCanvas = document.createElement('canvas');
+                const renderCtx = renderCanvas.getContext('2d');
 
-            bulkImages.forEach((bImg, idx) => {
                 renderCanvas.width = bImg.img.width;
                 renderCanvas.height = bImg.img.height;
 
@@ -1856,6 +1973,7 @@
                     renderCtx.rotate((layer.rotate * Math.PI) / 180);
                     renderCtx.filter = `brightness(${layer.brightness}%) saturate(${layer.saturation}%) hue-rotate(${layer.hue}deg)`;
                     renderCtx.globalAlpha = layer.opacity / 100;
+                    renderCtx.globalCompositeOperation = layer.blendMode || 'source-over';
 
                     if(layer.type === 'text') {
                         const fontSize = Math.round((renderCanvas.width * 0.05) * (layer.scale / 100));
@@ -1875,36 +1993,254 @@
                     renderCtx.restore();
                 });
 
-                // Формат определяется настройкой пользователя
-                const origExt = (bImg.ext && bImg.ext.length > 1) ? bImg.ext.toLowerCase() : '.png';
-                const fmt = appSettings.exportFormat || 'original';
-                let mimeType, fileExt;
-                if (fmt === 'jpg') {
-                    mimeType = 'image/jpeg'; fileExt = '.jpg';
-                } else if (fmt === 'png') {
-                    mimeType = 'image/png'; fileExt = '.png';
-                } else {
-                    // original
-                    fileExt = origExt;
-                    if (fileExt === '.jpg' || fileExt === '.jpeg') mimeType = 'image/jpeg';
-                    else if (fileExt === '.webp') mimeType = 'image/webp';
-                    else mimeType = 'image/png';
-                }
-
-                const finalName = parseFilenamePattern(appSettings.filenamePattern, idx + 1) + fileExt;
-                
-                const link = document.createElement('a');
-                link.download = finalName;
-                link.href = renderCanvas.toDataURL(mimeType, 0.95);
-                link.click();
+                renderCanvas.toBlob((blob) => {
+                    resolve(blob);
+                }, mimeType, quality);
             });
-
-            alert(appSettings.lang === 'ru' ? "Все изображения успешно обработаны и сохранены!" : "All images processed and saved successfully!");
-            resetApplyState();
-            navigateTo('menu-screen');
         }
 
-        // Парсер шаблонов имён файлов
+        /* [ИЗМЕНЕНО] Определение типа и расширения файла по настройкам */
+        function getExportFormatInfo(bImg) {
+            const origExt = (bImg.ext && bImg.ext.length > 1) ? bImg.ext.toLowerCase() : '.png';
+            const fmt = appSettings.exportFormat || 'original';
+            let mimeType, fileExt;
+            if (fmt === 'jpg') {
+                mimeType = 'image/jpeg'; fileExt = '.jpg';
+            } else if (fmt === 'png') {
+                mimeType = 'image/png'; fileExt = '.png';
+            } else {
+                fileExt = origExt;
+                if (fileExt === '.jpg' || fileExt === '.jpeg') mimeType = 'image/jpeg';
+                else if (fileExt === '.webp') mimeType = 'image/webp';
+                else mimeType = 'image/png';
+            }
+            return { mimeType, fileExt };
+        }
+
+        /* [ИЗМЕНЕНО] Показываем превью всех готовых файлов */
+        async function showExportPreview() {
+            const dict = i18n[appSettings.lang];
+            exportFiles = [];
+
+            document.getElementById('apply-blocker').style.display = 'block';
+            const sheet = document.getElementById('sheet-export-preview');
+            sheet.classList.add('open');
+
+            const content = document.getElementById('export-preview-content');
+            const counter = document.getElementById('export-counter');
+            const actions = document.getElementById('export-bottom-actions');
+
+            // Показываем индикатор загрузки
+            content.innerHTML = `<div class="render-progress">
+                <div class="render-progress-spinner"></div>
+                <div>${dict.exportRenderProgress}</div>
+            </div>`;
+            counter.innerText = '';
+            actions.style.display = 'none';
+
+            // Рендерим все изображения последовательно, чтобы не блокировать UI
+            // (Используем setTimeout-паузы между изображениями для отзывчивости)
+            const results = [];
+            for (let idx = 0; idx < bulkImages.length; idx++) {
+                const bImg = bulkImages[idx];
+                const { mimeType, fileExt } = getExportFormatInfo(bImg);
+                const finalName = parseFilenamePattern(appSettings.filenamePattern, idx + 1) + fileExt;
+
+                const blob = await renderBulkImageToBlob(bImg, mimeType, 0.95);
+                const dataUrl = await blobToDataUrl(blob);
+
+                results.push({
+                    id: bImg.id,
+                    name: finalName,
+                    ext: fileExt,
+                    mimeType: mimeType,
+                    blob: blob,
+                    dataUrl: dataUrl,
+                    size: blob.size
+                });
+
+                // Пауза для обновления UI (важно при пакетном рендере больших файлов)
+                if (idx % 3 === 0) {
+                    await new Promise(r => setTimeout(r, 0));
+                }
+            }
+
+            exportFiles = results;
+            renderExportPreviewGrid();
+        }
+
+        function blobToDataUrl(blob) {
+            return new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result);
+                reader.readAsDataURL(blob);
+            });
+        }
+
+        /* [ИЗМЕНЕНО] Рендеринг сетки превью */
+        function renderExportPreviewGrid() {
+            const dict = i18n[appSettings.lang];
+            const content = document.getElementById('export-preview-content');
+            const counter = document.getElementById('export-counter');
+            const actions = document.getElementById('export-bottom-actions');
+
+            content.innerHTML = '';
+            actions.style.display = 'flex';
+
+            if (exportFiles.length === 0) {
+                content.innerHTML = `<p style="opacity:0.5; padding:20px; text-align:center;">${dict.exportEmpty}</p>`;
+                counter.innerText = '';
+                actions.style.display = 'none';
+                return;
+            }
+
+            counter.innerText = dict.exportCounter.replace('{n}', exportFiles.length);
+
+            const grid = document.createElement('div');
+            grid.className = 'export-preview-grid';
+
+            exportFiles.forEach((file, idx) => {
+                const card = document.createElement('div');
+                card.className = 'preview-card';
+                card.dataset.fileIdx = idx;
+
+                const img = document.createElement('img');
+                img.src = file.dataUrl;
+                img.alt = file.name;
+                card.appendChild(img);
+
+                const info = document.createElement('div');
+                info.className = 'preview-card-info';
+
+                const nameEl = document.createElement('div');
+                nameEl.className = 'preview-card-name';
+                nameEl.innerText = file.name;
+                nameEl.title = file.name;
+                info.appendChild(nameEl);
+
+                const sizeEl = document.createElement('div');
+                sizeEl.className = 'preview-card-size';
+                sizeEl.innerText = formatFileSize(file.size);
+                info.appendChild(sizeEl);
+
+                card.appendChild(info);
+
+                const cardActions = document.createElement('div');
+                cardActions.className = 'preview-card-actions';
+
+                const btnSave = document.createElement('button');
+                btnSave.className = 'btn btn-primary btn-sm';
+                btnSave.innerHTML = '💾';
+                btnSave.title = dict.exportFileSaved;
+                btnSave.onclick = () => saveIndividualFile(idx);
+                cardActions.appendChild(btnSave);
+
+                const btnDel = document.createElement('button');
+                btnDel.className = 'btn btn-sm';
+                btnDel.style.backgroundColor = '#ff3b30';
+                btnDel.style.color = '#fff';
+                btnDel.innerHTML = '🗑️';
+                btnDel.onclick = () => removeExportFile(idx);
+                cardActions.appendChild(btnDel);
+
+                card.appendChild(cardActions);
+                grid.appendChild(card);
+            });
+
+            content.appendChild(grid);
+        }
+
+        /* [ИЗМЕНЕНО] Форматирование размера файла */
+        function formatFileSize(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+        }
+
+        /* [ИЗМЕНЕНО] Сохранение одного файла */
+        function saveIndividualFile(idx) {
+            if (idx < 0 || idx >= exportFiles.length) return;
+            const file = exportFiles[idx];
+            downloadBlob(file.blob, file.name);
+        }
+
+        /* [ИЗМЕНЕНО] Удаление файла из списка превью */
+        function removeExportFile(idx) {
+            exportFiles.splice(idx, 1);
+            renderExportPreviewGrid();
+        }
+
+        /* [ИЗМЕНЕНО] Сохранить все файлы по отдельности */
+        function saveAllFiles() {
+            if (exportFiles.length === 0) return;
+            const dict = i18n[appSettings.lang];
+            exportFiles.forEach((file, idx) => {
+                // Задержка между скачиваниями, чтобы браузер не заблокировал массовую загрузку
+                setTimeout(() => {
+                    downloadBlob(file.blob, file.name);
+                }, idx * 150);
+            });
+            // Уведомление появится сразу, но это ОК — загрузка в фоне
+            setTimeout(() => {
+                alert(dict.exportAllSaved);
+            }, exportFiles.length * 150 + 100);
+        }
+
+        /* [ИЗМЕНЕНО] Сохранить все файлы в ZIP-архиве */
+        async function saveAsZip() {
+            if (exportFiles.length === 0) return;
+            const dict = i18n[appSettings.lang];
+
+            if (typeof JSZip === 'undefined') {
+                alert(dict.exportZipError + '\n(JSZip not loaded)');
+                return;
+            }
+
+            const zip = new JSZip();
+            const usedNames = {};
+
+            exportFiles.forEach(file => {
+                // Защита от дубликатов имён внутри архива
+                let zipName = file.name;
+                let counter = 1;
+                while (usedNames[zipName]) {
+                    const base = file.name.replace(/(\.[^.]+)$/, '');
+                    const ext = file.name.match(/\.[^.]+$/)?.[0] || '';
+                    zipName = `${base}_${counter}${ext}`;
+                    counter++;
+                }
+                usedNames[zipName] = true;
+                zip.file(zipName, file.blob);
+            });
+
+            const zipBlob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' });
+            const now = new Date();
+            const dtStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}-${String(now.getMinutes()).padStart(2,'0')}`;
+            downloadBlob(zipBlob, `watermaster_${dtStr}.zip`);
+            alert(dict.exportZipSaved);
+        }
+
+        /* [ИЗМЕНЕНО] Универсальная функция скачивания Blob */
+        function downloadBlob(blob, filename) {
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            // Освобождаем URL через небольшую задержку
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+        }
+
+        /* [ИЗМЕНЕНО] Закрытие превью экспорта */
+        function closeExportPreview() {
+            document.getElementById('apply-blocker').style.display = 'none';
+            document.getElementById('sheet-export-preview').classList.remove('open');
+            // Освобождаем memory
+            exportFiles = [];
+        }
+
         function parseFilenamePattern(pattern, number) {
             let res = pattern ? pattern : "wtm_{n}{f}";
             const now = new Date();
@@ -1914,7 +2250,6 @@
             return res;
         }
 
-        // --- ОСТАЛЬНЫЕ СИСТЕМНЫЕ МЕТОДЫ ---
         function getInstalledWatermarks() {
             const list = localStorage.getItem('watermaster_saved_items');
             return list ? JSON.parse(list) : [];
@@ -2024,6 +2359,12 @@
             document.getElementById('loc-ap-bright').innerText = dict.pBright;
             document.getElementById('loc-ap-sat').innerText = dict.pSat;
             document.getElementById('loc-ap-hue').innerText = dict.pHue;
+
+            // [ИЗМЕНЕНО] Обновление строк локализации для превью экспорта
+            document.getElementById('loc-export-title').innerText = dict.exportTitle;
+            document.getElementById('loc-export-save-all').innerHTML = dict.exportSaveAll;
+            document.getElementById('loc-export-save-zip').innerHTML = dict.exportSaveZip;
+            document.getElementById('loc-export-cancel').innerText = dict.exportCancel;
         }
     </script>
 </body>
