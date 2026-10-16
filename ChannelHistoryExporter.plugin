@@ -1,0 +1,2685 @@
+# -*- coding: utf-8 -*-
+"""
+Channel History Exporter for exteraGram
+Version 1.0.0
+
+Exports the complete accessible Telegram channel history to:
+  - standalone HTML
+  - HTML + downloaded media directory
+
+Test target: exteraGram >= 12.5.1, SDK >= 1.4.4.3, Python 3.11.
+"""
+
+from typing import Any, Dict, List
+from html import escape
+from pathlib import Path
+from datetime import datetime
+import base64
+import json
+import mimetypes
+import os
+import re
+import threading
+import time
+import zipfile
+import shutil
+
+from base_plugin import BasePlugin, MenuItemData, MenuItemType
+from android_utils import log, run_on_ui_thread
+from client_utils import (
+    run_on_queue,
+    send_request,
+    get_last_fragment,
+)
+from client_utils import get_file_loader
+from file_utils import get_files_dir, ensure_dir_exists
+from ui.alert import AlertDialogBuilder
+from ui.bulletin import BulletinHelper
+from ui.settings import Header, Text, Input, Selector, Divider
+
+from org.telegram.tgnet import TLRPC
+from org.telegram.messenger import FileLoader, ImageLocation, AndroidUtilities, MessageObject
+from android.content import Context
+from android.widget import LinearLayout, CheckBox
+from android.content.res import ColorStateList
+
+try:
+    from android.widget import ScrollView, TextView
+    from android.view import View
+    from android.text import SpannableStringBuilder, Spanned
+    from android.text.style import RelativeSizeSpan, ForegroundColorSpan, StyleSpan
+    from android.graphics import Typeface
+except Exception:  # оформление необязательно: без него будет простой текст
+    ScrollView = TextView = View = None
+    SpannableStringBuilder = Spanned = None
+    RelativeSizeSpan = ForegroundColorSpan = StyleSpan = Typeface = None
+
+
+__id__ = "channel_history_exporter"
+__name__ = "Экспорт истории канала"
+__description__ = (
+    "Экспорт истории канала в HTML с выбором типов медиа. Менеджер экспортов и окно прогресса со счётчиками."
+)
+__author__ = "@MaxwellLink"
+__version__ = "1.0.0"
+__icon__ = "Pizda1903/1"
+__app_version__ = ">=12.5.1"
+__sdk_version__ = ">=1.4.4.3"
+
+
+PAGE_SIZE = 100
+REQUEST_TIMEOUT = 60
+MAX_MEDIA_WAIT = 120      # сек без прогресса загрузки одного файла
+MEDIA_START_GRACE = 20    # сек ожидания старта загрузки
+MEDIA_HARD_LIMIT = 3600   # абсолютный предел на один файл
+EXPORT_DIR_NAME = "channel_exports"
+
+
+def _as_list(value):
+    """Convert Python iterables and Java collections/ArrayLists to a Python list.
+
+    Chaquopy does not expose every Java collection as a Python-iterable object;
+    in particular, some exteraGram builds return java.util.ArrayList instances
+    that raise "'ArrayList' object is not iterable".
+    """
+    if value is None:
+        return []
+    try:
+        return list(value)
+    except (TypeError, AttributeError):
+        pass
+    # Java List / ArrayList bridge fallback.
+    try:
+        size = int(value.size())
+        return [value.get(i) for i in range(size)]
+    except Exception:
+        pass
+    # Some Java collection wrappers expose toArray() even when iteration fails.
+    try:
+        return list(value.toArray())
+    except Exception:
+        return []
+
+
+def _to_signed(color):
+    """Java int is signed; ARGB constants like 0xFFFFFFFF must be converted."""
+    color = int(color) & 0xFFFFFFFF
+    return color - 0x100000000 if color & 0x80000000 else color
+
+
+def _theme_color(key_names, default=None):
+    """Read a color from the current Telegram theme by the first existing key."""
+    try:
+        from org.telegram.ui.ActionBar import Theme
+        for name in key_names:
+            key = getattr(Theme, name, None)
+            if key is not None:
+                return Theme.getColor(key)
+    except Exception as e:
+        log("Theme color failed: %r" % (e,))
+    return default
+
+
+def _is_dark_theme():
+    try:
+        from org.telegram.ui.ActionBar import Theme
+        return bool(Theme.isCurrentThemeDark())
+    except Exception:
+        return True
+
+
+# Элементы страницы, цвет которых можно менять: (ключ, подпись)
+COLOR_ELEMENTS = [
+    ("bg", "Фон страницы"),
+    ("panel", "Шапка и блок опроса"),
+    ("card", "Карточка поста"),
+    ("fg", "Основной текст"),
+    ("muted", "Второстепенный текст (даты, просмотры, подписи)"),
+    ("link", "Ссылки, акцент, полоски опроса"),
+    ("line", "Границы и разделители"),
+    ("quote", "Цитаты и блоки кода"),
+    ("system_bg", "Фон служебных событий"),
+    ("system_fg", "Текст служебных событий"),
+    ("forward", "Подпись о репосте"),
+    ("spoiler", "Скрытый спойлер"),
+]
+COLOR_DEFAULTS = {
+    "light": {
+        "bg": "#f2f4f8", "panel": "#ffffff", "card": "#ffffff", "fg": "#20232a",
+        "muted": "#7b8492", "link": "#1683d8", "line": "#e5e8ef", "quote": "#edf2f8",
+        "system_bg": "#fff4d6", "system_fg": "#76551c", "forward": "#477b9c", "spoiler": "#343a46",
+    },
+    "dark": {
+        "bg": "#080b10", "panel": "#111822", "card": "#17202c", "fg": "#f1f3f5",
+        "muted": "#8994a5", "link": "#70b7ff", "line": "#2a3443", "quote": "#222d3d",
+        "system_bg": "#211d16", "system_fg": "#f0d49a", "forward": "#6aa6cc", "spoiler": "#343b49",
+    },
+}
+THEME_MODES = ["Авто (как в системе)", "Всегда светлая", "Всегда тёмная"]
+
+
+def _norm_hex(value):
+    """'#abc' / 'abc' / '#AABBCC' -> '#aabbcc'; anything else -> None."""
+    if value is None:
+        return None
+    v = str(value).strip().lstrip("#")
+    if re.fullmatch(r"[0-9a-fA-F]{3}", v):
+        v = "".join(ch * 2 for ch in v)
+    if re.fullmatch(r"[0-9a-fA-F]{6}", v):
+        return "#" + v.lower()
+    return None
+
+
+def _color_key(mode, name):
+    return "color_%s_%s" % (mode, name)
+
+
+def _is_broadcast_channel(chat):
+    """True only for broadcast channels (not groups, supergroups or private chats)."""
+    if chat is None:
+        return False
+    try:
+        from org.telegram.messenger import ChatObject
+        return bool(ChatObject.isChannelAndNotMegaGroup(chat))
+    except Exception:
+        pass
+    try:
+        return bool(getattr(chat, "broadcast", False)) and not bool(getattr(chat, "megagroup", False))
+    except Exception:
+        return False
+
+
+def _safe_name(value: str) -> str:
+    value = re.sub(r"[^\w\-. ]+", "_", value, flags=re.UNICODE).strip()
+    return value[:80] or "channel"
+
+
+def _format_date(ts: int) -> str:
+    try:
+        return datetime.fromtimestamp(int(ts)).strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return ""
+
+
+class _ExportCancelled(Exception):
+    """Пользователь отменил экспорт."""
+
+
+INDEX_NAME = ".exports_index.json"
+_INDEX_LOCK = threading.Lock()
+MEDIA_KINDS = ("image", "video", "audio", "file")
+KIND_LABEL = {"image": "Фото", "video": "Видео и GIF", "audio": "Аудио", "file": "Другие файлы"}
+
+
+def _dp(value):
+    try:
+        return int(AndroidUtilities.dp(value))
+    except Exception:
+        return int(value * 2.5)
+
+
+def _u16(text):
+    """Длина строки в UTF-16 (так считает Java/Spannable)."""
+    return len(text.encode("utf-16-le")) // 2
+
+
+def _format_stamp(ts):
+    try:
+        return datetime.fromtimestamp(int(ts)).strftime("%d.%m.%Y %H:%M")
+    except Exception:
+        return "дата неизвестна"
+
+
+def _human_size(n):
+    try:
+        n = float(n)
+    except Exception:
+        return ""
+    if n >= 1073741824:
+        return "%.2f ГБ" % (n / 1073741824.0)
+    if n >= 1048576:
+        return "%.1f МБ" % (n / 1048576.0)
+    return "%d КБ" % max(1, int(n / 1024))
+
+
+def _path_size(path):
+    try:
+        if os.path.isfile(path):
+            return os.path.getsize(path)
+        total = 0
+        for root, _dirs, files in os.walk(path):
+            for f in files:
+                try:
+                    total += os.path.getsize(os.path.join(root, f))
+                except Exception:
+                    pass
+        return total
+    except Exception:
+        return 0
+
+
+def _dialog_colors():
+    """(текст, второстепенный, акцент, фон полосы) — все в знаковом Java int."""
+    dark = _is_dark_theme()
+    text = _theme_color(("key_dialogTextBlack", "key_windowBackgroundWhiteBlackText"), None)
+    if text is None:
+        text = 0xFFFFFFFF if dark else 0xFF000000
+    muted = _theme_color(("key_dialogTextGray2", "key_windowBackgroundWhiteGrayText"), None)
+    if muted is None:
+        muted = 0xFF8A8A8A
+    accent = _theme_color(("key_dialogTextBlue", "key_windowBackgroundWhiteBlueText"), None)
+    if accent is None:
+        accent = text
+    return _to_signed(text), _to_signed(muted), _to_signed(accent), _to_signed(0x33808080)
+
+
+def _exports_root():
+    root = os.path.join(get_files_dir(), EXPORT_DIR_NAME)
+    ensure_dir_exists(root)
+    return root
+
+
+def _load_index():
+    try:
+        with open(os.path.join(_exports_root(), INDEX_NAME), "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _index_update(put=None, drop=()):
+    """Запись метаданных экспортов (канал, дата, счётчики) в служебный файл."""
+    with _INDEX_LOCK:
+        index = _load_index()
+        if put:
+            index.update(put)
+        for name in drop:
+            index.pop(name, None)
+        try:
+            path = os.path.join(_exports_root(), INDEX_NAME)
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(index, f, ensure_ascii=False)
+            os.replace(tmp, path)
+        except Exception as e:
+            log("Index save failed: %r" % (e,))
+
+
+def _entry_file(item):
+    """Файл, который отправляется/сохраняется: ZIP или HTML из папки экспорта."""
+    path = item["path"]
+    if os.path.isfile(path):
+        return path
+    try:
+        for name in sorted(os.listdir(path)):
+            if name.lower().endswith(".html"):
+                return os.path.join(path, name)
+    except Exception:
+        pass
+    return None
+
+
+def _current_account():
+    try:
+        from org.telegram.messenger import UserConfig
+        return int(UserConfig.selectedAccount)
+    except Exception:
+        return 0
+
+
+
+def _message_text(message) -> str:
+    text = getattr(message, "message", None)
+    if text:
+        return str(text)
+    return ""
+
+
+def _media_filename(message) -> str:
+    try:
+        path = FileLoader.getPathToMessage(message)
+        if path:
+            p = str(path)
+            if os.path.exists(p):
+                return os.path.basename(p)
+    except Exception:
+        pass
+
+    # Stable fallback. Telegram's original filename is used when available.
+    try:
+        media = message.media
+        document = getattr(media, "document", None)
+        if document:
+            for attr in _as_list(getattr(document, "attributes", None)):
+                fn = getattr(attr, "file_name", None)
+                if fn:
+                    return _safe_name(str(fn))
+            mime = str(getattr(document, "mime_type", "") or "")
+            ext = mimetypes.guess_extension(mime) or ".bin"
+            return "document_%s%s" % (int(message.id), ext)
+    except Exception:
+        pass
+
+    return "media_%s.bin" % int(message.id)
+
+
+def _file_uri(path: str) -> str:
+    # For WebView/file:// loading. Path is already local to the app sandbox.
+    return "file://" + path.replace(" ", "%20")
+
+
+def _attr(obj, *names, default=None):
+    for name in names:
+        try:
+            value = getattr(obj, name, None)
+            if value is not None:
+                return value
+        except Exception:
+            pass
+    return default
+
+
+def _peer_label(peer):
+    if peer is None:
+        return "неизвестный источник"
+    for key, label in (("channel_id", "канал"), ("chat_id", "чат"), ("user_id", "пользователь")):
+        value = _attr(peer, key)
+        if value:
+            return "%s ID %s" % (label, value)
+    return str(peer)
+
+
+_PEERS = {}   # (kind, id) -> {"name": str, "username": str}
+
+
+def _username_of(obj):
+    u = _attr(obj, "username")
+    if u:
+        return str(u)
+    for item in _as_list(_attr(obj, "usernames", default=[])):
+        name = _attr(item, "username")
+        if name and _attr(item, "active", default=True):
+            return str(name)
+    return ""
+
+
+def _register_peer(kind, obj):
+    try:
+        pid = _attr(obj, "id")
+        if not pid:
+            return
+        if kind == "user":
+            parts = [str(_attr(obj, "first_name", default="") or ""), str(_attr(obj, "last_name", default="") or "")]
+            name = " ".join(p for p in parts if p).strip()
+        else:
+            name = str(_attr(obj, "title", default="") or "")
+        username = _username_of(obj)
+        if not name:
+            name = ("@" + username) if username else ""
+        _PEERS[(kind, abs(int(pid)))] = {"name": name, "username": username}
+    except Exception as e:
+        log("register peer failed: %r" % (e,))
+
+
+def _register_peers(response):
+    """Remember users/chats that Telegram sends along with a response."""
+    for u in _as_list(_attr(response, "users", default=[])):
+        _register_peer("user", u)
+    for c in _as_list(_attr(response, "chats", default=[])):
+        kind = "channel" if "channel" in _action_name(c).lower() else "chat"
+        _register_peer(kind, c)
+
+
+def _peer_ref(peer):
+    """TL Peer -> (kind, id) or None."""
+    if peer is None:
+        return None
+    pname = _action_name(peer)
+    for attr, kind in (("user_id", "user"), ("channel_id", "channel"), ("chat_id", "chat")):
+        value = _attr(peer, attr)
+        if value:
+            try:
+                return kind, abs(int(value))
+            except Exception:
+                return None
+    return None
+
+
+def _forward_info(message):
+    """-> dict(name, copy, date) or None. 'copy' is @username, or the numeric id."""
+    header = _attr(message, "fwd_from")
+    if header is None:
+        return None
+    date = _attr(header, "date")
+    date_text = _format_date(date) if date else ""
+    from_name = _attr(header, "from_name")
+    ref = _peer_ref(_attr(header, "from_id"))
+    if ref is None:
+        ref = _peer_ref(_attr(header, "saved_from_peer"))
+    if ref is None and _attr(header, "channel_id"):
+        ref = ("channel", abs(int(_attr(header, "channel_id"))))
+
+    if ref is not None:
+        info = _PEERS.get(ref) or {}
+        name = info.get("name") or from_name
+        username = info.get("username") or ""
+        if not name:
+            name = "%s ID %s" % ({"user": "пользователь", "channel": "канал", "chat": "чат"}[ref[0]], ref[1])
+        return {"name": str(name), "copy": ("@" + username) if username else str(ref[1]), "date": date_text}
+    if from_name:
+        return {"name": str(from_name), "copy": "", "date": date_text}
+    return {"name": "неизвестный источник", "copy": "", "date": date_text}
+
+
+def _forward_source(message):
+    header = _attr(message, "fwd_from")
+    if header is None:
+        return ""
+    source = _attr(header, "from_name")
+    if not source:
+        source = _peer_label(_attr(header, "from_id", "saved_from_peer", "channel_id"))
+    date = _attr(header, "date")
+    suffix = " (дата: %s)" % _format_date(date) if date else ""
+    return "Репост из: %s%s" % (source, suffix)
+
+
+def _reaction_summary(message):
+    reactions = _attr(message, "reactions")
+    if reactions is None:
+        return ""
+    parts = []
+    for item in _as_list(_attr(reactions, "results", default=[])):
+        reaction = _attr(item, "reaction")
+        emoticon = _attr(reaction, "emoticon")
+        if not emoticon:
+            emoticon = _attr(_attr(reaction, "document_id"), "id") or str(reaction or "реакция")
+        count = _attr(item, "count", default=0)
+        parts.append("%s %s" % (emoticon, count))
+    return "Реакции: " + ", ".join(parts) if parts else ""
+
+
+def _comments_count(message):
+    replies = _attr(message, "replies")
+    if replies is None:
+        return None
+    count = _attr(replies, "replies", "comments", default=None)
+    return int(count) if count is not None else None
+
+
+def _service_label(message):
+    action = _attr(message, "action")
+    if action is None:
+        return ""
+    name = str(getattr(action, "getClass", lambda: type(action).__name__)())
+    name = name.split("$")[-1].replace("TL_messageAction", "").replace("MessageAction", "")
+    labels = {
+        "ChatEditPhoto": "Изменена фотография чата/канала",
+        "ChatDeletePhoto": "Удалена фотография чата/канала",
+        "ChatEditTitle": "Изменено название чата/канала",
+        "ChannelCreate": "Канал создан",
+        "ChatCreate": "Чат создан",
+        "PinMessage": "Закреплено сообщение",
+        "HistoryClear": "История очищена",
+        "ChannelMigrateFrom": "Канал создан при миграции",
+        "ChatMigrateTo": "Чат перенесён в канал",
+        "ChatAddUser": "Добавлены участники",
+        "ChatDeleteUser": "Удалён участник",
+    }
+    label = labels.get(name, "Системное событие: " + name)
+    title = _attr(action, "title")
+    if title:
+        label += " — " + str(title)
+    return label
+
+
+def _linkify_html(text):
+    """Escape message text and turn ordinary URLs into safe clickable links."""
+    escaped = escape(text or "")
+    pattern = r"(https?://[^\s<>\"']+|www\.[^\s<>\"']+)"
+    def repl(match):
+        url = match.group(0)
+        trailing = ""
+        while url and url[-1] in ".,!?;:)]}":
+            trailing = url[-1] + trailing
+            url = url[:-1]
+        href = url if url.startswith(("http://", "https://")) else "https://" + url
+        return '<a href="%s" target="_blank" rel="noopener noreferrer">%s</a>%s' % (escape(href, quote=True), url, trailing)
+    return re.sub(pattern, repl, escaped).replace("\n", "<br>\n")
+
+
+
+def _rich_text(message):
+    """Render Telegram message entities as safe HTML where the client exposes them."""
+    raw = _message_text(message) or ""
+    entities = _as_list(_attr(message, "entities", default=None))
+    if not entities:
+        return _linkify_html(raw)
+    # Telegram entity offsets are UTF-16 code units; map them to Python indices.
+    boundaries = {0: 0}
+    units = 0
+    for i, ch in enumerate(raw):
+        units += len(ch.encode("utf-16-le")) // 2
+        boundaries[units] = i + 1
+    spans = []
+    for ent in entities:
+        off = int(_attr(ent, "offset", default=0) or 0)
+        length = int(_attr(ent, "length", default=0) or 0)
+        start = boundaries.get(off)
+        end = boundaries.get(off + length)
+        if start is None or end is None or end <= start:
+            continue
+        name = type(ent).__name__.lower()
+        tag = None
+        if "bold" in name: tag = "b"
+        elif "italic" in name: tag = "i"
+        elif "underline" in name: tag = "u"
+        elif "strike" in name: tag = "s"
+        elif "spoiler" in name: tag = "span class=\"spoiler\""
+        elif "blockquote" in name: tag = "blockquote"
+        elif "pre" in name: tag = "pre"
+        elif "code" in name: tag = "code"
+        elif "texturl" in name:
+            url = _attr(ent, "url", default="")
+            if url: tag = 'a href=\"%s\" target=\"_blank\" rel=\"noopener noreferrer\"' % escape(str(url), quote=True)
+        if tag:
+            spans.append((start, end, tag))
+    # Apply from right to left so Python indices remain stable.
+    for start, end, tag in sorted(spans, key=lambda x: (x[0], -x[1]), reverse=True):
+        raw = raw[:start] + "\x00" + tag + "\x00" + raw[start:end] + "\x00/" + tag.split(" ")[0] + "\x00" + raw[end:]
+    pieces = raw.split("\x00")
+    out = []
+    for i, piece in enumerate(pieces):
+        if i % 2 == 0:
+            out.append(_linkify_html(piece))
+        elif piece.startswith("/"):
+            out.append("</" + piece[1:] + ">")
+        else:
+            out.append("<" + piece + ">")
+    return "".join(out)
+
+
+def _bytes_key(value):
+    """Stable key for a poll option id (Java byte[] with signed values, bytes or str)."""
+    if value is None:
+        return None
+    if isinstance(value, (bytes, bytearray)):
+        return bytes(value).hex()
+    if isinstance(value, str):
+        return value.encode("utf-8").hex()
+    try:
+        return bytes([int(x) & 0xFF for x in _as_list(value)]).hex()
+    except Exception:
+        return str(value)
+
+
+def _text_of(value, default=""):
+    """TL text fields are either str or TL_textWithEntities."""
+    if value is None:
+        return default
+    if isinstance(value, str):
+        return value
+    inner = _attr(value, "text")
+    return str(inner) if inner is not None else str(value)
+
+
+def _poll_html(message):
+    try:
+        return _poll_html_inner(message)
+    except Exception as e:
+        log("Poll render failed for %s: %r" % (getattr(message, "id", "?"), e))
+        return '<section class="poll"><div class="poll-total">Не удалось отобразить опрос: %s</div></section>' % escape(repr(e))
+
+
+def _poll_html_inner(message):
+    media = _attr(message, "media")
+    poll = _attr(media, "poll")
+    if poll is None:
+        return ""
+    question = _text_of(_attr(poll, "question"), "Опрос")
+    # В TL_messageMediaPoll результаты лежат рядом с poll, а не внутри него.
+    results_obj = _attr(media, "results")
+    if results_obj is None:
+        results_obj = _attr(poll, "results")
+    results = _as_list(_attr(results_obj, "results", default=[]))
+    options = _as_list(_attr(poll, "answers", default=[]))
+
+    counts = {}
+    chosen = set()
+    correct = set()
+    total = 0
+    for result in results:
+        key = _bytes_key(_attr(result, "option"))
+        if key is None:
+            continue
+        try:
+            count = int(_attr(result, "voters", "count", default=0) or 0)
+        except Exception:
+            count = 0
+        counts[key] = count
+        total += count
+        if _attr(result, "chosen", default=False):
+            chosen.add(key)
+        if _attr(result, "correct", default=False):
+            correct.add(key)
+    total_voters = _attr(results_obj, "total_voters", default=None)
+    try:
+        if total_voters is not None and int(total_voters) > 0:
+            total = max(total, int(total_voters)) if len(results) == 0 else total
+            shown_total = int(total_voters)
+        else:
+            shown_total = total
+    except Exception:
+        shown_total = total
+
+    out = ['<section class="poll"><div class="poll-title">📊 %s</div>' % escape(question)]
+    for idx, option in enumerate(options):
+        label = _text_of(_attr(option, "text"), "Вариант %d" % (idx + 1))
+        key = _bytes_key(_attr(option, "option"))
+        if key is None:
+            key = str(idx)
+        count = counts.get(key, 0)
+        pct = round(count * 100 / total) if total else 0
+        mark = (" ✓" if key in correct else "") + (" ●" if key in chosen else "")
+        out.append('<div class="poll-option"><div class="poll-label"><span>%s%s</span><b>%d%% · %d</b></div>'
+                   '<div class="poll-track"><i style="width:%d%%"></i></div></div>'
+                   % (escape(label), mark, pct, count, pct))
+    if not results:
+        out.append('<div class="poll-total">Результаты голосования недоступны в данных экспорта</div>')
+    else:
+        out.append('<div class="poll-total">Всего голосов: %d</div>' % shown_total)
+    return "".join(out) + "</section>"
+
+def _action_name(action):
+    try:
+        name = str(getattr(action, "getClass", lambda: type(action).__name__)())
+    except Exception:
+        name = type(action).__name__
+    return name.split("$")[-1]
+
+
+def _pinned_target(message):
+    """ID of the message pinned by a 'MessageActionPinMessage' service message."""
+    action = _attr(message, "action")
+    if action is None or "PinMessage" not in _action_name(action):
+        return None
+    reply = _attr(message, "reply_to")
+    rid = _attr(reply, "reply_to_msg_id") if reply is not None else None
+    if not rid:
+        rid = _attr(message, "reply_to_msg_id", default=None)
+    if not rid:
+        rid = _attr(action, "id", "message_id", "pinned_msg_id")
+    try:
+        return int(rid) if rid else None
+    except Exception:
+        return None
+
+
+def _action_photo(message):
+    """Photo attached to 'chat/channel photo changed' service messages."""
+    action = _attr(message, "action")
+    if action is None or "EditPhoto" not in _action_name(action):
+        return None
+    return _attr(action, "photo")
+
+
+MONTHS_RU = ["января", "февраля", "марта", "апреля", "мая", "июня",
+             "июля", "августа", "сентября", "октября", "ноября", "декабря"]
+KIND_ICON = {"image": "🖼", "video": "🎬", "audio": "🎵", "file": "📎"}
+KIND_NAME = {"image": "Фото", "video": "Видео", "audio": "Аудио", "file": "Файл"}
+
+
+def _date_parts(ts):
+    """-> (day_key, '12 октября [2025]', 'HH:MM')"""
+    try:
+        d = datetime.fromtimestamp(int(ts))
+    except Exception:
+        return "", "", ""
+    label = "%d %s" % (d.day, MONTHS_RU[d.month - 1])
+    if d.year != datetime.now().year:
+        label += " %d" % d.year
+    return d.strftime("%Y-%m-%d"), label, d.strftime("%H:%M")
+
+
+def _short_count(value):
+    try:
+        n = int(value)
+    except Exception:
+        return str(value)
+    if n >= 1000000:
+        return ("%.1fM" % (n / 1000000.0)).replace(".0M", "M")
+    if n >= 1000:
+        return ("%.1fK" % (n / 1000.0)).replace(".0K", "K")
+    return str(n)
+
+
+def _plural(n, forms):
+    n = abs(int(n))
+    if 11 <= n % 100 <= 14:
+        return forms[2]
+    if n % 10 == 1:
+        return forms[0]
+    if 2 <= n % 10 <= 4:
+        return forms[1]
+    return forms[2]
+
+
+def _reaction_items(message):
+    """-> list of (emoji, count)"""
+    reactions = _attr(message, "reactions")
+    if reactions is None:
+        return []
+    out = []
+    for item in _as_list(_attr(reactions, "results", default=[])):
+        reaction = _attr(item, "reaction")
+        emoticon = _attr(reaction, "emoticon")
+        if not emoticon:
+            emoticon = "✨" if _attr(reaction, "document_id") else "⭐"
+        try:
+            count = int(_attr(item, "count", default=0) or 0)
+        except Exception:
+            count = 0
+        out.append((str(emoticon), count))
+    return out
+
+
+def _html_for_message(message, media_rel=None, media_kind=None, media_failed=False,
+                      items=None, extra_ids=None) -> str:
+    mid = int(getattr(message, "id", 0))
+    _day, _label, hhmm = _date_parts(getattr(message, "date", 0))
+    full_date = _format_date(getattr(message, "date", 0))
+    text = _rich_text(message)
+    service = _service_label(message)
+    forward = _forward_info(message)
+    reactions = _reaction_items(message)
+    comments = _comments_count(message)
+    kind = media_kind or _kind_for_message(message)
+    if items is None:
+        items = [(media_rel, kind, media_failed)] if kind else []
+    extra_ids = extra_ids or []
+    anchors = "".join('<span id="m-%d"></span>' % int(e) for e in extra_ids)
+    poll_html = _poll_html(message)
+    views = _attr(message, "views", default=None)
+
+    # Служебное сообщение — центральная «таблетка», как в Telegram.
+    if service and not text and not poll_html:
+        pill = '<span>%s</span>' % service
+        target = _pinned_target(message)
+        if target:
+            pill = '<a class="svc-pin" href="#m-%d" title="Перейти к закреплённому сообщению">%s</a>' % (target, pill)
+        photo_html = ""
+        for rel, k, _f in items:
+            if rel and k == "image":
+                src = escape(rel, quote=True)
+                photo_html = '<a class="svc-photo" href="%s" target="_blank"><img alt="" src="%s"></a>' % (src, src)
+                break
+        return '<div class="service" id="m-%d">%s%s%s</div>' % (mid, anchors, pill, photo_html)
+
+    meta = []
+    if views is not None:
+        meta.append('<span class="views">👁 %s</span>' % escape(_short_count(views)))
+    meta.append('<a class="time" href="#m-%d" title="%s · #%d">%s</a>' % (mid, escape(full_date), mid, escape(hhmm)))
+    meta_html = "".join(meta)
+
+    visual = [it for it in items if it[1] in ("image", "video")]
+    other = [it for it in items if it[1] not in ("image", "video")]
+
+    def tile(rel, k, failed):
+        if rel:
+            src = escape(rel, quote=True)
+            if k == "video":
+                return '<div class="tile"><video controls preload="metadata" src="%s"></video></div>' % src
+            return '<div class="tile"><a href="%s" target="_blank"><img loading="lazy" alt="" src="%s"></a></div>' % (src, src)
+        state = "не удалось скачать" if failed else "не сохранено в архив"
+        return '<div class="tile ph"><span>%s %s<br><small>%s</small></span></div>' % (
+            KIND_ICON.get(k, "📎"), KIND_NAME.get(k, "Медиа"), state)
+
+    media_html = ""
+    if visual:
+        media_html = '<div class="grid n%d">%s</div>' % (
+            min(len(visual), 5), "".join(tile(*it) for it in visual))
+
+    rows = []
+    for rel, k, failed in other:
+        if rel and k == "audio":
+            rows.append('<div class="audio"><audio controls preload="metadata" src="%s"></audio></div>'
+                        % escape(rel, quote=True))
+        elif rel:
+            name = re.sub(r"^\d+_", "", os.path.basename(rel))
+            rows.append('<a class="file" href="%s"><span class="ficon">📎</span><span class="fname">%s</span></a>'
+                        % (escape(rel, quote=True), escape(name)))
+        else:
+            state = "не удалось скачать" if failed else "не сохранено в архив"
+            rows.append('<div class="file miss"><span class="ficon">%s</span><span class="fname">%s — %s</span></div>'
+                        % (KIND_ICON.get(k, "📎"), KIND_NAME.get(k, "Медиа"), state))
+
+    react_html = ""
+    if reactions:
+        react_html = '<div class="reactions">%s</div>' % "".join(
+            '<span class="react">%s <b>%d</b></span>' % (escape(e), c) for e, c in reactions)
+
+    inline_meta = bool(text) and not react_html and not poll_html and not rows
+    body = []
+    if service:
+        body.append('<div class="svc-line">%s</div>' % service)
+    if text:
+        body.append('<div class="text">%s%s</div>' % (
+            text, '<span class="mf">%s</span>' % meta_html if inline_meta else ""))
+    if poll_html:
+        body.append(poll_html)
+    body.extend(rows)
+    body.append(react_html)
+    if not inline_meta:
+        body.append('<div class="footer">%s</div>' % meta_html)
+
+    cls = "message"
+    if visual:
+        cls += " has-media"
+    if poll_html:
+        cls += " has-poll"
+
+    out = ['<article class="%s" id="m-%d">' % (cls, mid), anchors]
+    if forward:
+        if forward["copy"]:
+            name_html = '<span class="fwd-name" data-copy="%s" title="Нажмите, чтобы скопировать">%s</span>' % (
+                escape(forward["copy"], quote=True), escape(forward["name"]))
+        else:
+            name_html = escape(forward["name"])
+        date_html = ' <span class="fwd-date">(%s)</span>' % escape(forward["date"]) if forward["date"] else ""
+        out.append('<div class="fwd">↪ Репост из: %s%s</div>' % (name_html, date_html))
+    out.append(media_html)
+    out.append('<div class="body">%s</div>' % "".join(body))
+    if comments is not None:
+        out.append('<div class="comments">💬 %d %s</div>' % (
+            comments, _plural(comments, ("комментарий", "комментария", "комментариев"))))
+    out.append("</article>")
+    return "".join(out)
+
+
+def _kind_for_message(message):
+    try:
+        media = message.media
+        if not media:
+            return None
+
+        photo = getattr(media, "photo", None)
+        if photo:
+            return "image"
+
+        document = getattr(media, "document", None)
+        if document:
+            mime = str(getattr(document, "mime_type", "") or "").lower()
+            if mime.startswith("image/"):
+                return "image"
+            if mime.startswith("video/"):
+                return "video"
+            if mime.startswith("audio/"):
+                return "audio"
+            # Telegram GIFs/animations are usually video documents.
+            for attr in _as_list(getattr(document, "attributes", None)):
+                aname = type(attr).__name__
+                if "Animated" in aname or "Video" in aname:
+                    return "video"
+            return "file"
+        # Опросы, ссылки-превью, геопозиции и т.п. — не файлы.
+        return None
+    except Exception:
+        return None
+
+
+class ChannelHistoryExporter(BasePlugin):
+    def on_plugin_load(self):
+        self._job = None
+        self._lock = threading.Lock()
+        self.menu_id = self.add_menu_item(MenuItemData(
+            menu_type=MenuItemType.CHAT_ACTION_MENU,
+            text="Экспорт истории канала",
+            subtext="HTML с медиа · здесь же можно вернуться к прогрессу",
+            icon="msg_files",
+            priority=100,
+            on_click=self._menu_click,
+        ))
+        self.log("Channel History Exporter loaded")
+
+    def create_settings(self):
+        return [
+            Header(text="Экспорт истории"),
+            Text(
+                text="Менеджер экспортов",
+                subtext="Дата сохранения, выбор нескольких, Избранное/Загрузки, переход в канал, удаление",
+                icon="msg_folder",
+                on_click=lambda view: self._manage_exports_click(None),
+            ),
+            Divider(),
+            Header(text="Оформление страницы истории"),
+            Selector(
+                key="page_theme",
+                text="Тема страницы",
+                default=0,
+                items=THEME_MODES,
+                icon="msg_theme",
+            ),
+            Text(
+                text="Цвета светлой темы",
+                subtext="Цвет каждого элемента, формат #RRGGBB",
+                icon="msg_palette",
+                create_sub_fragment=lambda: self._color_settings("light"),
+            ),
+            Text(
+                text="Цвета тёмной темы",
+                subtext="Цвет каждого элемента, формат #RRGGBB",
+                icon="msg_palette",
+                create_sub_fragment=lambda: self._color_settings("dark"),
+            ),
+            Text(
+                text="Сбросить все цвета",
+                icon="msg_reset",
+                red=True,
+                on_click=lambda view: self._reset_colors(),
+            ),
+            Divider(text="Изменения применяются к следующим экспортам."),
+        ]
+
+    def _color_settings(self, mode):
+        def make_cb(name):
+            def cb(value):
+                if _norm_hex(value) is None and str(value).strip():
+                    self._info("Неверный цвет «%s». Нужен формат #RRGGBB — будет использован цвет по умолчанию." % value)
+            return cb
+        title = "Светлая тема" if mode == "light" else "Тёмная тема"
+        rows = [Header(text=title + ": цвета элементов")]
+        for name, label in COLOR_ELEMENTS:
+            default = COLOR_DEFAULTS[mode][name]
+            rows.append(Input(
+                key=_color_key(mode, name),
+                text=label,
+                default=default,
+                subtext="По умолчанию %s" % default,
+                icon="msg_palette",
+                on_change=make_cb(name),
+            ))
+        rows.append(Divider(text="Пустое или неверное значение = цвет по умолчанию."))
+        return rows
+
+    def _reset_colors(self):
+        try:
+            for mode in ("light", "dark"):
+                for name, _label in COLOR_ELEMENTS:
+                    self.set_setting(_color_key(mode, name), COLOR_DEFAULTS[mode][name], reload_settings=False)
+            self.set_setting("page_theme", 0, reload_settings=True)
+            self._info("Цвета сброшены.")
+        except Exception as e:
+            self._info("Не удалось сбросить: %s" % str(e))
+
+    def _palette(self, mode):
+        palette = {}
+        for name, _label in COLOR_ELEMENTS:
+            raw = None
+            try:
+                raw = self.get_setting(_color_key(mode, name), None)
+            except Exception:
+                pass
+            palette[name] = _norm_hex(raw) or COLOR_DEFAULTS[mode][name]
+        return palette
+
+    def _theme_css(self):
+        def css_vars(p):
+            return ";".join("--%s:%s" % (k.replace("_", "-"), v) for k, v in p.items())
+        try:
+            mode = int(self.get_setting("page_theme", 0) or 0)
+        except Exception:
+            mode = 0
+        light, dark = css_vars(self._palette("light")), css_vars(self._palette("dark"))
+        dark_extra = ".message{box-shadow:0 5px 20px rgba(0,0,0,.22)}"
+        if mode == 1:
+            return ":root{color-scheme:light;%s}" % light
+        if mode == 2:
+            return ":root{color-scheme:dark;%s}%s" % (dark, dark_extra)
+        return (":root{color-scheme:light dark;%s}"
+                "@media(prefers-color-scheme:dark){:root{%s}%s}" % (light, dark, dark_extra))
+
+    # ------------------------------------------------------------------
+    # Менеджер экспортов
+    # ------------------------------------------------------------------
+    def _manage_exports_click(self, context=None):
+        run_on_ui_thread(lambda: self._open_manager(set()))
+
+    def _collect_exports(self):
+        root = _exports_root()
+        index = _load_index()
+        try:
+            names = os.listdir(root)
+        except Exception:
+            names = []
+        items, alive = [], set()
+        for name in names:
+            if name.startswith("."):
+                continue
+            path = os.path.join(root, name)
+            alive.add(name)
+            meta = index.get(name)
+            meta = meta if isinstance(meta, dict) else {}
+            stem = name[:-4] if name.lower().endswith(".zip") else name
+            title, created = meta.get("title"), meta.get("created")
+            m = re.match(r"^(.*)_(\d{9,11})$", stem)
+            if m:
+                title = title or m.group(1).replace("_", " ").strip()
+                created = created or int(m.group(2))
+            if not created:
+                try:
+                    created = int(os.path.getmtime(path))
+                except Exception:
+                    created = 0
+            items.append({
+                "name": name, "path": path, "meta": meta,
+                "title": title or stem, "created": int(created),
+                "size": _path_size(path), "is_zip": name.lower().endswith(".zip"),
+                "dialog_id": meta.get("dialog_id"), "account": meta.get("account"),
+            })
+        stale = [n for n in index if n not in alive]
+        if stale:
+            _index_update(drop=stale)
+        items.sort(key=lambda i: i["created"], reverse=True)
+        return items
+
+    def _media_summary(self, item):
+        meta = item["meta"]
+        kinds = [k for k in MEDIA_KINDS if k in (meta.get("kinds") or [])]
+        if not kinds:
+            return "HTML + медиа" if item["is_zip"] else "Только HTML"
+        done, total = meta.get("done") or {}, meta.get("total") or {}
+        parts = ["%s %d/%d" % (KIND_ICON[k], int(done.get(k, 0)), int(total.get(k, 0))) for k in kinds]
+        text = "  ".join(parts)
+        if meta.get("fail"):
+            text += "  · ⚠ ошибок: %d" % int(meta["fail"])
+        return text
+
+    def _row_text(self, item, muted):
+        title = (item["title"] or item["name"]).replace("\n", " ")
+        if len(title) > 60:
+            title = title[:57] + "…"
+        rest = "🕒 %s · %s · %s\n%s" % (
+            _format_stamp(item["created"]), _human_size(item["size"]),
+            "ZIP" if item["is_zip"] else "HTML", self._media_summary(item))
+        if not item.get("dialog_id"):
+            rest += "\nКанал неизвестен (экспорт из старой версии)"
+        full = title + "\n" + rest
+        try:
+            sp = SpannableStringBuilder(full)
+            n1, n = _u16(title), _u16(full)
+            flag = Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+            sp.setSpan(StyleSpan(Typeface.BOLD), 0, n1, flag)
+            sp.setSpan(RelativeSizeSpan(0.82), n1 + 1, n, flag)
+            sp.setSpan(ForegroundColorSpan(muted), n1 + 1, n, flag)
+            return sp
+        except Exception:
+            return full
+
+    def _manager_view(self, activity, items, selected):
+        text_c, muted_c, accent_c, _track = _dialog_colors()
+        scroll = ScrollView(activity)
+        box = LinearLayout(activity)
+        box.setOrientation(LinearLayout.VERTICAL)
+        box.setPadding(_dp(20), _dp(4), _dp(20), _dp(4))
+        checks = []
+        for item in items:
+            cb = CheckBox(activity)
+            cb.setText(self._row_text(item, muted_c))
+            cb.setTextSize(15.0)
+            cb.setTextColor(text_c)
+            try:
+                cb.setButtonTintList(ColorStateList.valueOf(accent_c))
+            except Exception:
+                pass
+            cb.setPadding(_dp(6), _dp(6), 0, _dp(6))
+            cb.setChecked(item["name"] in selected)
+            box.addView(cb)
+            checks.append(cb)
+        scroll.addView(box)
+        return scroll, checks
+
+    def _open_manager(self, selected):
+        try:
+            fragment = get_last_fragment()
+            activity = fragment.getParentActivity() if fragment else None
+            if not activity:
+                self._info("Не удалось открыть менеджер экспортов.")
+                return
+            items = self._collect_exports()
+            if not items:
+                self._info("Сохранённых экспортов пока нет.")
+                return
+            known = {i["name"] for i in items}
+            selected = {n for n in selected if n in known}
+            view, checks = self._manager_view(activity, items, selected)
+
+            def current():
+                return {items[i]["name"] for i, cb in enumerate(checks) if cb.isChecked()}
+
+            def to_actions(d, w):
+                sel = current()
+                d.dismiss()
+                if not sel:
+                    self._info("Ничего не выбрано.")
+                    self._open_manager(sel)
+                    return
+                self._manager_actions(activity, [i for i in items if i["name"] in sel])
+
+            def toggle_all(d, w):
+                sel = current()
+                d.dismiss()
+                self._open_manager(set() if len(sel) == len(items) else set(known))
+
+            b = AlertDialogBuilder(activity)
+            b.set_title("Менеджер экспортов (%d)" % len(items))
+            b.set_message("Отметьте один или несколько файлов и нажмите «Действия».")
+            b.set_view(view)
+            b.set_positive_button("Действия", to_actions)
+            b.set_neutral_button("Снять всё" if len(selected) == len(items) else "Выбрать все", toggle_all)
+            b.set_negative_button("Закрыть", lambda d, w: d.dismiss())
+            b.show()
+        except Exception as e:
+            log("Manager open failed: %r" % (e,))
+            self._info("Не удалось открыть менеджер экспортов: " + str(e))
+
+    def _manager_actions(self, activity, chosen):
+        names = {i["name"] for i in chosen}
+        labels = ["⭐  В Избранное", "⬇  В Загрузки"]
+        acts = ["saved", "downloads"]
+        if len(chosen) == 1 and chosen[0].get("dialog_id"):
+            labels.append("📣  Перейти в канал")
+            acts.append("open")
+        labels.append("🗑  Удалить")
+        acts.append("delete")
+
+        def choose(d, which):
+            d.dismiss()
+            act = acts[int(which)]
+            if act == "delete":
+                self._confirm_delete(activity, chosen)
+            elif act == "open":
+                self._open_channel(chosen[0].get("dialog_id"), chosen[0].get("account"))
+            else:
+                self._bulk_deliver(activity, chosen, act)
+
+        def back(d, w):
+            d.dismiss()
+            self._open_manager(names)
+
+        b = AlertDialogBuilder(activity)
+        if len(chosen) == 1:
+            it = chosen[0]
+            b.set_title(it["title"][:60])
+            b.set_message("Сохранено: %s\n%s · %s" % (
+                _format_stamp(it["created"]), _human_size(it["size"]), self._media_summary(it)))
+        else:
+            b.set_title("Выбрано файлов: %d" % len(chosen))
+            b.set_message("Общий размер: %s" % _human_size(sum(i["size"] for i in chosen)))
+        b.set_items(labels, choose)
+        b.set_negative_button("Назад", back)
+        b.show()
+
+    def _bulk_deliver(self, activity, chosen, mode):
+        ok = 0
+        for it in chosen:
+            path = _entry_file(it)
+            if not path:
+                continue
+            if mode == "saved":
+                acc = it.get("account")
+                acc = _current_account() if acc is None else int(acc)
+                good = self._send_to_saved(path, acc, quiet=True)
+            else:
+                good = self._save_to_downloads(path, activity, quiet=True)
+            ok += 1 if good else 0
+        where = "в Избранное" if mode == "saved" else "в Загрузки"
+        if mode == "saved" and ok:
+            self._info("Отправляется %s: %d из %d" % (where, ok, len(chosen)))
+        elif ok:
+            self._info("Сохранено %s: %d из %d" % (where, ok, len(chosen)))
+        else:
+            self._info("Не удалось сохранить %s." % where)
+
+    def _confirm_delete(self, activity, chosen):
+        names = {i["name"] for i in chosen}
+        preview = "\n".join("• %s (%s)" % (i["title"][:40], _format_stamp(i["created"])) for i in chosen[:6])
+        if len(chosen) > 6:
+            preview += "\n… и ещё %d" % (len(chosen) - 6)
+
+        def yes(d, w):
+            d.dismiss()
+            run_on_queue(lambda: self._delete_entries(chosen))
+
+        def no(d, w):
+            d.dismiss()
+            self._open_manager(names)
+
+        b = AlertDialogBuilder(activity)
+        b.set_title("Удалить экспорты: %d?" % len(chosen))
+        b.set_message(preview + "\n\nЭто действие нельзя отменить.")
+        b.set_positive_button("Удалить", yes)
+        b.set_negative_button("Отмена", no)
+        b.show()
+
+    def _delete_entries(self, chosen):
+        root = os.path.abspath(_exports_root())
+        removed, failed = [], 0
+        for it in chosen:
+            target = os.path.abspath(it["path"])
+            if os.path.dirname(target) != root:
+                failed += 1
+                continue
+            try:
+                if os.path.isdir(target):
+                    shutil.rmtree(target)
+                elif os.path.isfile(target):
+                    os.remove(target)
+                removed.append(it["name"])
+            except Exception as e:
+                log("Delete failed %s: %r" % (target, e))
+                failed += 1
+        _index_update(drop=removed)
+        self._info("Удалено: %d" % len(removed) + (", не удалось: %d" % failed if failed else ""))
+        run_on_ui_thread(lambda: self._open_manager(set()))
+
+    def _open_channel(self, dialog_id, account):
+        def ui():
+            try:
+                if dialog_id is None:
+                    self._info("Для этого экспорта канал неизвестен.")
+                    return
+                if account is not None and int(account) != _current_account():
+                    self._info("Канал относится к другому аккаунту (#%d). Переключитесь на него." % (int(account) + 1))
+                    return
+                from client_utils import get_messages_controller
+                from org.telegram.ui import ChatActivity
+                from android.os import Bundle
+                chat_id = abs(int(dialog_id))
+                if get_messages_controller(_current_account()).getChat(chat_id) is None:
+                    self._info("Канал недоступен: возможно, вы отписались или он удалён.")
+                    return
+                fragment = get_last_fragment()
+                if fragment is None:
+                    self._info("Не удалось открыть канал.")
+                    return
+                args = Bundle()
+                args.putLong("chat_id", chat_id)
+                fragment.presentFragment(ChatActivity(args))
+            except Exception as e:
+                log("Open channel failed: %r" % (e,))
+                self._info("Не удалось открыть канал: " + str(e))
+        run_on_ui_thread(ui)
+
+    def on_plugin_unload(self):
+        with self._lock:
+            job = self._job
+            if job is not None:
+                try:
+                    job["cancel"].set()
+                except Exception:
+                    pass
+            self._job = None
+
+    def _menu_click(self, context: Dict[str, Any]):
+        # exteraGram passes a dict. Keep this callback deliberately small:
+        # resolve the documented common keys and always show feedback.
+        try:
+            # Menu context is a Java HashMap in exteraGram, not necessarily
+            # a Python dict. Do not call Python-only methods such as keys().
+            def ctx_get(name, default=None):
+                try:
+                    if hasattr(context, "get"):
+                        value = context.get(name)
+                        return default if value is None else value
+                except Exception:
+                    pass
+                try:
+                    return context[name]
+                except Exception:
+                    return default
+
+            dialog_id = ctx_get("dialog_id")
+            account = ctx_get("account", 0)
+            chat = ctx_get("chat")
+            fragment = ctx_get("fragment")
+
+            if chat is None and dialog_id is not None and int(dialog_id) < 0:
+                try:
+                    from client_utils import get_messages_controller
+                    chat = get_messages_controller(int(account or 0)).getChat(abs(int(dialog_id)))
+                except Exception as e:
+                    self.log("Export: cannot load chat: %r" % (e,))
+            if not _is_broadcast_channel(chat):
+                self._info("Экспорт доступен только в каналах.")
+                return
+
+            if fragment is None:
+                try:
+                    fragment = get_last_fragment()
+                except Exception as e:
+                    self.log("Export: get_last_fragment failed: %r" % (e,))
+                    fragment = None
+
+            if dialog_id is None:
+                self.log("Export: dialog_id is missing")
+                self._info("Не удалось определить канал. Попробуйте открыть канал заново.")
+                return
+
+            job = self._job
+            if job is not None:
+                if int(job["dialog_id"]) == int(dialog_id):
+                    self._show_progress_window(activity=None)
+                else:
+                    self._info("Сейчас идёт экспорт канала «%s». Прогресс доступен в меню того канала." % job["title"])
+                return
+
+            title = "Канал"
+            description = ""
+            try:
+                if chat is not None:
+                    chat_title = getattr(chat, "title", None)
+                    if chat_title:
+                        title = str(chat_title)
+                    description = str(_attr(chat, "about", "description", default="") or "")
+                    full = ctx_get("chatFull")
+                    if not description and full is not None:
+                        description = str(_attr(full, "about", "description", default="") or "")
+            except Exception as e:
+                self.log("Export: cannot read chat title: %r" % (e,))
+
+            self.log(
+                "Export: dialog_id=%s account=%s fragment=%s"
+                % (dialog_id, account, fragment)
+            )
+
+            self._show_export_choice(
+                int(dialog_id), int(account or 0), title, fragment, description
+            )
+        except Exception as e:
+            self.log("Export menu callback failed: %r" % (e,))
+            self._info("Ошибка плагина: %s" % str(e))
+
+    def _show_export_choice(self, dialog_id, account, title, fragment, description=""):
+        def ui():
+            try:
+                activity = fragment.getParentActivity() if fragment else None
+                if not activity:
+                    self._info("Не удалось получить текущее окно.")
+                    return
+                labels = ["Фото и изображения", "Видео и GIF", "Аудио", "Другие файлы"]
+                kinds = ["image", "video", "audio", "file"]
+                checkboxes = []
+                text_color = _theme_color(("key_dialogTextBlack", "key_windowBackgroundWhiteBlackText"), None)
+                accent_color = _theme_color(("key_dialogTextBlue", "key_windowBackgroundWhiteBlueText"), None)
+                if text_color is None:
+                    text_color = 0xFFFFFFFF if _is_dark_theme() else 0xFF000000
+                if accent_color is None:
+                    accent_color = text_color
+                try:
+                    pad = int(AndroidUtilities.dp(20))
+                    pad_v = int(AndroidUtilities.dp(6))
+                except Exception:
+                    pad, pad_v = 40, 12
+                choices_view = LinearLayout(activity)
+                choices_view.setOrientation(LinearLayout.VERTICAL)
+                choices_view.setPadding(pad, pad_v, pad, pad_v)
+                for label in labels:
+                    checkbox = CheckBox(activity)
+                    checkbox.setText(label)
+                    checkbox.setTextSize(16)
+                    checkbox.setTextColor(_to_signed(text_color))
+                    try:
+                        checkbox.setButtonTintList(ColorStateList.valueOf(_to_signed(accent_color)))
+                    except Exception:
+                        pass
+                    checkbox.setChecked(False)
+                    choices_view.addView(checkbox)
+                    checkboxes.append(checkbox)
+                def start(dialog, which):
+                    try:
+                        selected = {
+                            kinds[i] for i, checkbox in enumerate(checkboxes)
+                            if checkbox.isChecked()
+                        }
+                        dialog.dismiss()
+                        self._start_export(dialog_id, account, title, selected, activity, description)
+                    except Exception as e:
+                        self.log("Export choice callback failed: %r" % (e,))
+                        self._info("Ошибка: %s" % str(e))
+                b = AlertDialogBuilder(activity)
+                b.set_title("Типы медиа для экспорта")
+                b.set_message("Отметьте типы медиа, которые нужно сохранить. По умолчанию всё выключено. Если ничего не выбрано, сохранится только HTML.")
+                b.set_view(choices_view)
+                b.set_positive_button("Экспортировать", start)
+                b.set_negative_button("Отмена", lambda d, w: d.dismiss())
+                b.show()
+            except Exception as e:
+                self.log("Export dialog failed: %r" % (e,))
+                self._info("Не удалось открыть окно экспорта: %s" % str(e))
+        run_on_ui_thread(ui)
+
+    def _start_export(self, dialog_id, account, title, selected_kinds, activity, description=""):
+        with self._lock:
+            if self._job is not None:
+                self._info("Экспорт уже выполняется: «%s»." % self._job["title"])
+                return
+            self._job = {
+                "dialog_id": int(dialog_id), "account": int(account), "title": title,
+                "kinds": set(selected_kinds or []), "percent": 0,
+                "message": "Получение сообщений…",
+                "total": {}, "done": {}, "fail": {}, "totals_ready": False,
+                "cancel": threading.Event(), "dialog": None, "ui": None, "last_ui": 0.0,
+            }
+        self._show_progress_window(activity)
+        run_on_queue(
+            lambda: self._export_worker(
+                dialog_id, account, title, selected_kinds, activity, description
+            )
+        )
+
+    def _finish_job(self, dialog_id=None):
+        with self._lock:
+            self._job = None
+
+    # ---- состояние -----------------------------------------------------
+    def _cancelled(self):
+        job = self._job
+        return job is None or job["cancel"].is_set()
+
+    def _check_cancel(self):
+        if self._cancelled():
+            raise _ExportCancelled()
+
+    def _request_cancel(self):
+        job = self._job
+        if job is not None:
+            job["cancel"].set()
+            job["message"] = "Отмена…"
+        self._info("Экспорт отменяется…")
+
+    def _set_totals(self, totals):
+        job = self._job
+        if job is None:
+            return
+        job["total"] = dict(totals)
+        job["totals_ready"] = True
+        self._post_refresh(force=True)
+
+    def _bump(self, kind, ok):
+        job = self._job
+        if job is None:
+            return
+        bucket = job["done"] if ok else job["fail"]
+        bucket[kind] = bucket.get(kind, 0) + 1
+        self._post_refresh()
+
+    def _set_progress(self, value, message=None):
+        job = self._job
+        if job is None:
+            return
+        job["percent"] = max(0, min(100, int(value)))
+        if message and not job["cancel"].is_set():
+            job["message"] = message
+        self._post_refresh(force=bool(message))
+
+    def _post_refresh(self, force=False):
+        job = self._job
+        if job is None or not job.get("ui"):
+            return
+        now = time.time()
+        if not force and now - job["last_ui"] < 0.25:
+            return
+        job["last_ui"] = now
+        run_on_ui_thread(self._refresh_progress)
+
+    def _counts_text(self, job):
+        kinds = [k for k in MEDIA_KINDS if k in job["kinds"]]
+        if not kinds:
+            return "Медиа не выбраны — сохраняется только HTML."
+        if not job["totals_ready"]:
+            return "Медиафайлы будут подсчитаны после получения истории…"
+        lines = ["Медиафайлы (сохранено / всего):"]
+        sum_done = sum_total = 0
+        for k in kinds:
+            d, t, f = job["done"].get(k, 0), job["total"].get(k, 0), job["fail"].get(k, 0)
+            sum_done += d
+            sum_total += t
+            line = "%s %s: %d / %d" % (KIND_ICON[k], KIND_LABEL[k], d, t)
+            if f:
+                line += "   ⚠ ошибок: %d" % f
+            lines.append(line)
+        if len(kinds) > 1:
+            lines.append("Итого: %d / %d" % (sum_done, sum_total))
+        return "\n".join(lines)
+
+    def _refresh_progress(self):
+        job = self._job
+        ui = job.get("ui") if job else None
+        if not ui:
+            return
+        try:
+            pct = job["percent"]
+            ui["status"].setText(job["message"])
+            ui["pct"].setText("%d%%" % pct)
+            ui["counts"].setText(self._counts_text(job))
+            if ui.get("fill") is not None:
+                ui["fill_lp"].weight = float(max(pct, 0.01))
+                ui["rest_lp"].weight = float(max(100 - pct, 0.01))
+                ui["fill"].setLayoutParams(ui["fill_lp"])
+                ui["rest"].setLayoutParams(ui["rest_lp"])
+        except Exception as e:
+            log("Progress refresh failed: %r" % (e,))
+
+    # ---- окно ----------------------------------------------------------
+    def _show_progress_window(self, activity=None):
+        def ui():
+            job = self._job
+            if job is None:
+                return
+            try:
+                act = activity
+                if act is None:
+                    fragment = get_last_fragment()
+                    act = fragment.getParentActivity() if fragment else None
+                if not act:
+                    self._info("Не удалось открыть окно прогресса.")
+                    return
+                old = job.get("dialog")
+                if old is not None:
+                    try:
+                        old.dismiss()
+                    except Exception:
+                        pass
+                    job["dialog"] = None
+                    job["ui"] = None
+
+                text_c, muted_c, accent_c, track_c = _dialog_colors()
+                root = LinearLayout(act)
+                root.setOrientation(LinearLayout.VERTICAL)
+                root.setPadding(_dp(22), _dp(8), _dp(22), _dp(8))
+
+                status = TextView(act)
+                status.setTextSize(15.0)
+                status.setTextColor(text_c)
+                root.addView(status)
+
+                refs = {"status": status}
+                bar_h = _dp(6)
+                try:
+                    bar = LinearLayout(act)
+                    bar.setOrientation(LinearLayout.HORIZONTAL)
+                    fill, rest = View(act), View(act)
+                    fill.setBackgroundColor(accent_c)
+                    rest.setBackgroundColor(track_c)
+                    fill_lp = LinearLayout.LayoutParams(0, bar_h, 0.01)
+                    rest_lp = LinearLayout.LayoutParams(0, bar_h, 100.0)
+                    bar.addView(fill, fill_lp)
+                    bar.addView(rest, rest_lp)
+                    bar_lp = LinearLayout.LayoutParams(-1, bar_h)
+                    bar_lp.topMargin = _dp(12)
+                    root.addView(bar, bar_lp)
+                    refs.update({"fill": fill, "rest": rest, "fill_lp": fill_lp, "rest_lp": rest_lp})
+                except Exception as e:
+                    log("Progress bar failed: %r" % (e,))
+
+                pct = TextView(act)
+                pct.setTextSize(13.0)
+                pct.setTextColor(muted_c)
+                pct.setPadding(0, _dp(4), 0, _dp(10))
+                root.addView(pct)
+
+                counts = TextView(act)
+                counts.setTextSize(15.0)
+                counts.setTextColor(text_c)
+                counts.setLineSpacing(0.0, 1.15)
+                root.addView(counts)
+
+                hint = TextView(act)
+                hint.setTextSize(12.0)
+                hint.setTextColor(muted_c)
+                hint.setPadding(0, _dp(12), 0, 0)
+                hint.setText("Окно можно скрыть: экспорт продолжится. Вернуться — меню этого канала → «Экспорт истории канала».")
+                root.addView(hint)
+
+                refs.update({"pct": pct, "counts": counts})
+
+                def hide(d, w):
+                    d.dismiss()
+                    job["dialog"] = None
+                    job["ui"] = None
+                    self._info("Экспорт продолжается. Вернуться: меню канала → «Экспорт истории канала».")
+
+                def ask_cancel(d, w):
+                    d.dismiss()
+                    job["dialog"] = None
+                    job["ui"] = None
+                    c = AlertDialogBuilder(act)
+                    c.set_title("Отменить экспорт?")
+                    c.set_message("Уже скачанные файлы этого экспорта будут удалены.")
+
+                    def yes(d2, w2):
+                        d2.dismiss()
+                        self._request_cancel()
+
+                    def no(d2, w2):
+                        d2.dismiss()
+                        self._show_progress_window(act)
+
+                    c.set_positive_button("Отменить экспорт", yes)
+                    c.set_negative_button("Продолжить", no)
+                    c.show()
+
+                b = AlertDialogBuilder(act)
+                b.set_title("Экспорт: " + job["title"][:40])
+                b.set_view(root)
+                b.set_positive_button("Скрыть", hide)
+                b.set_negative_button("Отменить экспорт", ask_cancel)
+                try:
+                    b.set_cancelable(True)
+                except Exception:
+                    pass
+                b.show()
+                job["dialog"] = b
+                job["ui"] = refs
+                self._refresh_progress()
+            except Exception as e:
+                log("Progress window failed: %r" % (e,))
+                self._info("Не удалось открыть окно прогресса: " + str(e))
+        run_on_ui_thread(ui)
+
+    def _close_progress(self):
+        job = self._job
+        dialog = job.get("dialog") if job else None
+        if job is not None:
+            job["ui"] = None
+            job["dialog"] = None
+
+        def ui():
+            try:
+                if dialog is not None:
+                    dialog.dismiss()
+            except Exception:
+                pass
+        run_on_ui_thread(ui)
+
+    def _info(self, text):
+        run_on_ui_thread(lambda: BulletinHelper.show_info(text))
+
+    def _export_worker(self, dialog_id, account, title, selected_kinds, activity, description=""):
+        base = None
+        try:
+            base = os.path.join(
+                get_files_dir(), EXPORT_DIR_NAME,
+                "%s_%s" % (_safe_name(title), int(time.time()))
+            )
+            ensure_dir_exists(base)
+
+            media_dir = os.path.join(base, "media")
+            if selected_kinds:
+                ensure_dir_exists(media_dir)
+
+            messages = self._fetch_history(dialog_id, account)
+            self._check_cancel()
+            if not messages:
+                raise RuntimeError("Telegram не вернул сообщения.")
+
+            messages.sort(key=lambda m: int(getattr(m, "id", 0)))
+            self._resolve_missing_peers(messages, account)
+
+            info = {}
+            try:
+                info = self._fetch_channel_info(dialog_id, account)
+            except Exception as e:
+                self.log("Export: channel info failed: %r" % (e,))
+            if not description:
+                description = info.get("about") or ""
+            pinned_ids = []
+            try:
+                pinned_ids = self._fetch_pinned_ids(dialog_id, account, info.get("pinned_id"))
+            except Exception as e:
+                self.log("Export: pinned fetch failed: %r" % (e,))
+            self._check_cancel()
+
+            avatar_rel = None
+            if "image" in (selected_kinds or []):
+                self._set_progress(52, "Загрузка аватарки канала…")
+                avatar_rel = self._prepare_avatar(dialog_id, account, media_dir)
+            self._check_cancel()
+
+            self._set_progress(55, "Формирование HTML…")
+            html = self._build_html(title, messages, media_dir if selected_kinds else None, description, selected_kinds, account, avatar_rel, info.get("subscribers"), pinned_ids)
+            self._check_cancel()
+
+            html_path = os.path.join(base, "%s.html" % _safe_name(title))
+            with open(html_path, "w", encoding="utf-8") as f:
+                f.write(html)
+            errors = list(getattr(self, "_errors", []) or [])
+            log_path = os.path.join(base, "export_log.txt")
+            if errors:
+                with open(log_path, "w", encoding="utf-8") as f:
+                    f.write("\n\n".join(errors))
+
+            if selected_kinds:
+                zip_path = os.path.join(os.path.dirname(base), "%s_%s.zip" % (_safe_name(title), int(time.time())))
+                self._set_progress(90, "Упаковка HTML и медиа в ZIP…")
+                try:
+                    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as archive:
+                        archive.write(html_path, os.path.basename(html_path))
+                        if os.path.isfile(log_path):
+                            archive.write(log_path, "export_log.txt")
+                        if os.path.isdir(media_dir):
+                            for root, dirs, files in os.walk(media_dir):
+                                for filename in files:
+                                    self._check_cancel()
+                                    full = os.path.join(root, filename)
+                                    # Медиа уже сжаты — не тратим время на deflate.
+                                    archive.write(full, os.path.relpath(full, base),
+                                                  compress_type=zipfile.ZIP_STORED)
+                except _ExportCancelled:
+                    try:
+                        os.remove(zip_path)
+                    except Exception:
+                        pass
+                    raise
+                result = zip_path
+                entry_name = os.path.basename(zip_path)
+                shutil.rmtree(base, ignore_errors=True)
+            else:
+                result = html_path
+                entry_name = os.path.basename(base)
+
+            # Метаданные для менеджера: дата, канал, счётчики по типам.
+            stats = getattr(self, "_stats", None) or {}
+            job = self._job or {}
+            _index_update(put={entry_name: {
+                "dialog_id": int(dialog_id),
+                "account": int(account),
+                "title": title,
+                "created": int(time.time()),
+                "kinds": sorted(selected_kinds or []),
+                "total": dict(job.get("total") or {}),
+                "done": dict(job.get("done") or {}),
+                "ok": int(stats.get("ok", 0)),
+                "fail": int(stats.get("fail", 0)),
+                "posts": len(messages),
+            }})
+
+            self._set_progress(100, "Готово")
+            self._close_progress()
+            self._finish_job(dialog_id)
+            self._show_result(result, account)
+
+        except _ExportCancelled:
+            if base:
+                shutil.rmtree(base, ignore_errors=True)
+            self._close_progress()
+            self._finish_job(dialog_id)
+            self._info("Экспорт отменён.")
+        except Exception as e:
+            log("ChannelHistoryExporter error: %r" % (e,))
+            self._close_progress()
+            self._finish_job(dialog_id)
+            self._info("Ошибка экспорта: %s" % str(e))
+
+    def _prepare_avatar(self, dialog_id, account, media_dir):
+        """Download the channel photo and copy it to media/avatar.jpg. Returns relative path or None."""
+        try:
+            from client_utils import get_messages_controller
+            controller = get_messages_controller(account)
+            chat = controller.getChat(abs(int(dialog_id)))
+            photo = _attr(chat, "photo")
+            loc_obj = _attr(photo, "photo_big")
+            if loc_obj is None:
+                loc_obj = _attr(photo, "photo_small")
+            if loc_obj is None:
+                self.log("Avatar: у канала нет фотографии")
+                return None
+
+            loader = get_file_loader(account)
+            try:
+                key = str(FileLoader.getAttachFileName(loc_obj))
+            except Exception as e:
+                key = None
+                self.log("Avatar getAttachFileName: %r" % (e,))
+
+            def candidates():
+                paths = []
+                for args in ((loc_obj, True), (loc_obj,)):
+                    try:
+                        paths.append(FileLoader.getPathToAttach(*args))
+                    except Exception as e:
+                        self.log("Avatar getPathToAttach%d: %r" % (len(args), e))
+                if key:
+                    try:
+                        import file_utils as _fu
+                        for getter in ("get_cache_dir", "get_images_dir", "get_files_dir"):
+                            fn = getattr(_fu, getter, None)
+                            d = fn() if fn else None
+                            if d:
+                                paths.append(os.path.join(str(d), key))
+                    except Exception as e:
+                        self.log("Avatar scan dirs: %r" % (e,))
+                return paths
+
+            def copy_if_ready():
+                for path in candidates():
+                    try:
+                        path = str(path)
+                        if os.path.isfile(path) and os.path.getsize(path) > 0:
+                            ensure_dir_exists(media_dir)
+                            dest_name = "avatar.jpg"
+                            with open(path, "rb") as src_file, open(os.path.join(media_dir, dest_name), "wb") as out_file:
+                                shutil.copyfileobj(src_file, out_file)
+                            return "media/" + dest_name
+                    except Exception as e:
+                        self.log("Avatar copy failed: %r" % (e,))
+                return None
+
+            ready = copy_if_ready()
+            if ready:
+                return ready
+
+            priority = getattr(FileLoader, "PRIORITY_NORMAL", 1)
+            requested = False
+            for cache_type in (1, 0):
+                try:
+                    big = getattr(ImageLocation, "TYPE_BIG", 0)
+                    image_loc = ImageLocation.getForChat(chat, big)
+                    loader.loadFile(image_loc, chat, "jpg", priority, cache_type)
+                    requested = True
+                    break
+                except Exception as e:
+                    self.log("Avatar loadFile(cacheType=%s): %r" % (cache_type, e))
+            if not requested:
+                return None
+
+            started = time.time()
+            while time.time() - started < 40:
+                time.sleep(0.4)
+                ready = copy_if_ready()
+                if ready:
+                    return ready
+            self.log("Avatar: файл не появился за 40 с")
+        except Exception as e:
+            self.log("Avatar failed: %r" % (e,))
+        return None
+
+    def _request(self, req, account):
+        holder = {"done": False, "response": None, "error": None}
+
+        def callback(response, error):
+            holder["response"] = response
+            holder["error"] = error
+            holder["done"] = True
+
+        send_request(req, callback, account=account)
+        started = time.time()
+        while not holder["done"]:
+            if time.time() - started > REQUEST_TIMEOUT:
+                raise RuntimeError("Тайм-аут запроса.")
+            time.sleep(0.05)
+        if holder["error"]:
+            raise RuntimeError("Telegram API: %s" % getattr(holder["error"], "text", str(holder["error"])))
+        return holder["response"]
+
+    def _resolve_missing_peers(self, messages, account):
+        """Forward sources not present in history responses: try Telegram's local cache."""
+        try:
+            from client_utils import get_messages_controller
+            controller = get_messages_controller(account)
+        except Exception as e:
+            self.log("peers: no controller: %r" % (e,))
+            return
+        for m in messages:
+            header = _attr(m, "fwd_from")
+            if header is None:
+                continue
+            ref = _peer_ref(_attr(header, "from_id")) or _peer_ref(_attr(header, "saved_from_peer"))
+            if ref is None or ref in _PEERS:
+                continue
+            try:
+                if ref[0] == "user":
+                    obj = controller.getUser(ref[1])
+                else:
+                    obj = controller.getChat(ref[1])
+                if obj is not None:
+                    _register_peer(ref[0], obj)
+            except Exception as e:
+                self.log("peers: resolve %s failed: %r" % (ref, e))
+
+    def _fetch_channel_info(self, dialog_id, account):
+        """-> {'about': str, 'subscribers': int|None, 'pinned_id': int|None}"""
+        from client_utils import get_messages_controller
+
+        controller = get_messages_controller(account)
+        chat_id = abs(int(dialog_id))
+        info = {"about": "", "subscribers": None, "pinned_id": None}
+
+        full = None
+        try:
+            req = TLRPC.TL_channels_getFullChannel()
+            req.channel = controller.getInputChannel(chat_id)
+            full = _attr(self._request(req, account), "full_chat")
+        except Exception as e:
+            self.log("getFullChannel failed: %r" % (e,))
+        if full is None:
+            try:
+                full = controller.getChatFull(chat_id)
+            except Exception as e:
+                self.log("getChatFull failed: %r" % (e,))
+
+        if full is not None:
+            info["about"] = str(_attr(full, "about", default="") or "")
+            count = _attr(full, "participants_count", default=None)
+            if count is not None:
+                info["subscribers"] = int(count)
+            pinned = _attr(full, "pinned_msg_id", default=None)
+            if pinned:
+                info["pinned_id"] = int(pinned)
+
+        if info["subscribers"] is None:
+            try:
+                chat = controller.getChat(chat_id)
+                count = _attr(chat, "participants_count", default=None)
+                if count:
+                    info["subscribers"] = int(count)
+            except Exception as e:
+                self.log("participants_count fallback failed: %r" % (e,))
+        return info
+
+    def _fetch_pinned_ids(self, dialog_id, account, fallback_id=None):
+        """All pinned message ids (newest first)."""
+        from client_utils import get_messages_controller
+
+        ids = set()
+        try:
+            controller = get_messages_controller(account)
+            req = TLRPC.TL_messages_search()
+            req.peer = controller.getInputPeer(int(dialog_id))
+            req.q = ""
+            req.filter = TLRPC.TL_inputMessagesFilterPinned()
+            req.limit = 100
+            response = self._request(req, account)
+            for m in _as_list(_attr(response, "messages", default=[])):
+                try:
+                    ids.add(int(m.id))
+                except Exception:
+                    pass
+        except Exception as e:
+            self.log("Pinned search failed: %r" % (e,))
+        if fallback_id:
+            ids.add(int(fallback_id))
+        return sorted(ids, reverse=True)
+
+    def _fetch_history(self, dialog_id, account):
+        """
+        Fetch all pages with messages.getHistory.
+
+        Telegram's Android client exposes getInputPeer through MessagesController.
+        We deliberately use raw TL requests so the export is independent of what
+        is currently rendered on screen.
+        """
+        from client_utils import get_messages_controller
+
+        controller = get_messages_controller(account)
+        peer = controller.getInputPeer(int(dialog_id))
+        if peer is None:
+            raise RuntimeError("Не удалось получить InputPeer канала.")
+
+        result = []
+        offset_id = 0
+        _PEERS.clear()
+
+        while True:
+            self._check_cancel()
+            req = TLRPC.TL_messages_getHistory()
+            req.peer = peer
+            req.offset_id = int(offset_id)
+            req.offset_date = 0
+            req.add_offset = 0
+            req.limit = PAGE_SIZE
+            req.max_id = 0
+            req.min_id = 0
+            req.hash = 0
+
+            holder = {"done": False, "response": None, "error": None}
+
+            def callback(response, error):
+                holder["response"] = response
+                holder["error"] = error
+                holder["done"] = True
+
+            send_request(req, callback, account=account)
+
+            started = time.time()
+            while not holder["done"]:
+                if time.time() - started > REQUEST_TIMEOUT:
+                    raise RuntimeError("Тайм-аут запроса истории.")
+                time.sleep(0.05)
+
+            if holder["error"]:
+                err = holder["error"]
+                raise RuntimeError(
+                    "Telegram API: %s" % getattr(err, "text", str(err))
+                )
+
+            response = holder["response"]
+            _register_peers(response)
+            batch = _as_list(getattr(response, "messages", None))
+            if not batch:
+                break
+
+            for m in batch:
+                try:
+                    m.dialog_id = int(dialog_id)
+                except Exception:
+                    pass
+            result.extend(batch)
+
+            last_id = int(getattr(batch[-1], "id", 0))
+            if last_id <= 0:
+                break
+
+            # History is returned newest -> oldest.
+            if last_id == offset_id:
+                break
+            offset_id = last_id
+
+            self._set_progress(
+                min(50, 5 + int(len(result) / PAGE_SIZE)),
+                "Получено сообщений: %d" % len(result)
+            )
+
+        # Deduplicate in case of an unusual server response.
+        unique = {}
+        for m in result:
+            unique[int(m.id)] = m
+        return list(unique.values())
+
+    def _build_html(self, title, messages, media_dir, description="", selected_kinds=None, account=0, avatar_rel=None, subscribers=None, pinned_ids=None):
+        chunks = []
+        downloaded = 0
+        failed = 0
+        selected_kinds = set(selected_kinds or [])
+        self._errors = []
+
+        # Альбомы: подряд идущие сообщения с одинаковым grouped_id -> один пост.
+        groups = []
+        for message in messages:
+            gid = 0
+            try:
+                gid = int(getattr(message, "grouped_id", 0) or 0)
+            except Exception:
+                gid = 0
+            if gid and groups and groups[-1][0] == gid:
+                groups[-1][1].append(message)
+            else:
+                groups.append((gid, [message]))
+
+        post_count = [0]
+        last_day = [None]
+
+        def add_post(msg, html_text):
+            day, label, _t = _date_parts(getattr(msg, "date", 0))
+            if day and day != last_day[0]:
+                last_day[0] = day
+                chunks.append('<div class="date-sep"><span>%s</span></div>' % escape(label))
+            chunks.append(html_text)
+            post_count[0] += 1
+
+        # Сколько медиафайлов нужно сохранить — по типам (до начала загрузки).
+        totals = {}
+        if media_dir:
+            for message in messages:
+                k = _kind_for_message(message)
+                if not k and _action_photo(message) is not None:
+                    k = "image"
+                if k in selected_kinds:
+                    totals[k] = totals.get(k, 0) + 1
+        total_media = sum(totals.values())
+        self._set_totals(totals)
+
+        done = 0
+        for gid, members in groups:
+            items = []
+            for message in members:
+                kind = _kind_for_message(message)
+                action_photo = None
+                if not kind:
+                    action_photo = _action_photo(message)
+                    if action_photo is not None:
+                        kind = "image"
+                if not kind:
+                    continue
+                rel = None
+                was_failed = False
+                if media_dir and kind in selected_kinds:
+                    self._check_cancel()
+                    self._set_progress(
+                        55 + int(35 * (downloaded + failed) / max(1, total_media)),
+                        "Загрузка медиа: файл %d из %d" % (downloaded + failed + 1, total_media)
+                    )
+                    rel, _k = self._prepare_media(message, media_dir, account, action_photo)
+                    self._check_cancel()
+                    if rel:
+                        downloaded += 1
+                        self._bump(kind, True)
+                    else:
+                        failed += 1
+                        was_failed = True
+                        self._bump(kind, False)
+                items.append((rel, kind, was_failed))
+                done += 1
+            done = max(done, 0)
+
+            primary = members[0]
+            for m in members:
+                if _message_text(m):
+                    primary = m
+                    break
+            extra_ids = [int(m.id) for m in members if m is not primary]
+
+            if len(members) > 1:
+                add_post(primary, _html_for_message(primary, items=items, extra_ids=extra_ids))
+            else:
+                rel, kind, was_failed = items[0] if items else (None, None, False)
+                add_post(primary, _html_for_message(primary, rel, kind, was_failed))
+                if not items:
+                    done += 1
+
+            if not media_dir and len(chunks) % 100 == 0:
+                self._set_progress(
+                    55 + int(25 * len(chunks) / max(1, len(groups))),
+                    "Обработка сообщений: %d/%d" % (len(chunks), len(groups))
+                )
+
+        template = """<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<script>document.addEventListener("click",function(e){if(e.target.classList.contains("spoiler")){e.target.classList.toggle("revealed");e.target.style.color=e.target.classList.contains("revealed")?"var(--fg)":"transparent";}});</script>
+<title>@@TITLE@@ — экспорт Telegram</title>
+<style>
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background-color:var(--bg);color:var(--fg);
+background-image:radial-gradient(circle at 1px 1px,rgba(127,127,127,.13) 1px,transparent 0);background-size:24px 24px;
+font:15.5px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif}
+a{color:var(--link);overflow-wrap:anywhere}
+.header{position:sticky;top:0;z-index:5;background:var(--panel);border-bottom:1px solid var(--line);padding:8px 14px}
+.hbar{max-width:640px;margin:0 auto;display:flex;align-items:center;gap:12px}
+.avatar{flex:none;width:42px;height:42px;border-radius:50%;overflow:hidden;background:var(--link);color:#fff;display:flex;align-items:center;justify-content:center;font-size:19px;font-weight:600}
+.avatar img{display:block;width:100%;height:100%;object-fit:cover}
+.htext{min-width:0;flex:1}
+.jump{flex:none;display:flex;gap:6px;margin-left:auto}
+.jump button{width:34px;height:34px;border:0;border-radius:50%;background:var(--quote);color:var(--link);font-size:18px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.jump button:active{filter:brightness(.9)}
+.fwd-name{cursor:pointer;text-decoration:underline dotted;text-underline-offset:2px}
+.fwd-date{color:var(--muted);font-weight:400}
+#toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(20px);background:rgba(30,30,30,.92);color:#fff;padding:8px 16px;border-radius:18px;font-size:14px;opacity:0;pointer-events:none;transition:.25s;z-index:20;max-width:90%;overflow-wrap:anywhere}
+#toast.show{opacity:1;transform:translateX(-50%)}
+.header h1{font-size:16px;font-weight:600;margin:0;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.header p{margin:1px 0 0;color:var(--muted);font-size:13px}
+.description{max-width:640px;margin:6px auto 0;font-size:14px}
+.description summary{cursor:pointer;color:var(--link);font-weight:500;list-style:none}
+.description summary::-webkit-details-marker{display:none}
+.description-body{padding:6px 0 2px;color:var(--fg);white-space:pre-wrap;overflow-wrap:anywhere}
+.content{max-width:640px;margin:0 auto;padding:10px 10px 56px;display:flex;flex-direction:column;align-items:flex-start;gap:6px}
+.date-sep{align-self:center;margin:10px 0 4px}
+.date-sep span,.service span{display:inline-block;background:var(--system-bg);color:var(--system-fg);padding:3px 12px;border-radius:14px;font-size:13px;font-weight:500}
+.service{align-self:center;display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center;margin:4px 0;scroll-margin-top:140px}
+.svc-pin{text-decoration:none!important;cursor:pointer}.svc-pin:hover span{filter:brightness(.95)}
+.svc-photo img{display:block;width:120px;height:120px;border-radius:50%;object-fit:cover}
+.service a{color:inherit;text-decoration:underline}
+.message{scroll-margin-top:140px;position:relative;max-width:min(100%,480px);background:var(--card);border-radius:16px 16px 16px 4px;box-shadow:0 1px 2px rgba(0,0,0,.14);overflow:hidden}
+.message.has-media{width:min(100%,480px)}
+.message.has-poll{width:min(100%,400px)}
+@keyframes flash{0%{box-shadow:0 0 0 3px var(--link)}100%{box-shadow:0 1px 2px rgba(0,0,0,.14)}}
+.message:target,.message.flash{animation:flash 1.8s ease-out}
+.pinbar{max-width:640px;margin:7px auto 0;display:flex;gap:10px;align-items:stretch;cursor:pointer}
+.pin-line{flex:none;width:2px;background:var(--link);border-radius:2px}
+.pin-txt{min-width:0;flex:1}
+.pin-title{color:var(--link);font-size:13px;font-weight:500;line-height:1.3}
+.pin-snip{font-size:14px;line-height:1.3;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.pin-ico{flex:none;align-self:center;opacity:.7}
+.body{padding:6px 11px 5px}
+.body:empty{display:none}
+.fwd{color:var(--forward);font-size:13.5px;font-weight:500;border-left:3px solid var(--forward);margin:6px 11px 0;padding:0 0 0 8px}
+.has-media .fwd{margin-bottom:6px}
+.svc-line{color:var(--system-fg);background:var(--system-bg);padding:5px 9px;border-radius:8px;margin:3px 0;font-size:13px}
+.text{white-space:normal;overflow-wrap:anywhere;word-break:break-word}
+.mf,.footer{font-size:12px;color:var(--muted);line-height:1}
+.mf{float:right;margin:8px 0 -3px 12px;display:inline-flex;gap:7px;align-items:center}
+.footer{display:flex;justify-content:flex-end;gap:7px;padding-top:4px}
+.time{color:var(--muted);text-decoration:none}
+.views{white-space:nowrap}
+.spoiler{background:var(--spoiler);color:transparent;border-radius:5px;cursor:pointer;user-select:none;padding:0 3px}
+.spoiler:hover,.spoiler:active{color:var(--fg)}
+blockquote{margin:6px 0;padding:6px 10px;border-left:3px solid var(--link);background:var(--quote);border-radius:0 8px 8px 0}
+pre,code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;background:var(--quote);border-radius:6px;padding:1px 5px;white-space:pre-wrap}
+pre{padding:8px 10px;overflow-wrap:anywhere}
+.grid{display:grid;gap:2px;background:var(--card)}
+.grid.n1{grid-template-columns:1fr}
+.grid.n2,.grid.n3,.grid.n4{grid-template-columns:1fr 1fr}
+.grid.n5{grid-template-columns:1fr 1fr 1fr}
+.tile{position:relative;min-width:0;background:var(--quote);overflow:hidden}
+.tile a{display:block;height:100%}
+.tile img,.tile video{display:block;width:100%;height:auto;max-height:640px;object-fit:cover}
+.grid:not(.n1) .tile{aspect-ratio:1/1}
+.grid:not(.n1) .tile img,.grid:not(.n1) .tile video{height:100%}
+.grid.n3 .tile:first-child{grid-column:span 2;aspect-ratio:2/1}
+.tile.ph{display:flex;align-items:center;justify-content:center;min-height:120px;color:var(--muted);text-align:center;font-size:14px;padding:12px}
+.tile.ph small{font-size:12px}
+.audio{margin:4px 0}.audio audio{width:100%}
+.file{display:flex;align-items:center;gap:10px;margin:5px 0;text-decoration:none;color:var(--fg)}
+.ficon{flex:none;width:40px;height:40px;border-radius:50%;background:var(--link);color:#fff;display:flex;align-items:center;justify-content:center;font-size:18px}
+.fname{min-width:0;overflow-wrap:anywhere;font-weight:500}
+.file.miss{color:var(--muted)}.file.miss .ficon{background:var(--quote);color:var(--muted)}
+.reactions{display:flex;flex-wrap:wrap;gap:4px;margin:6px 0 0}
+.react{background:var(--quote);border-radius:13px;padding:3px 9px;font-size:13px;color:var(--fg);white-space:nowrap}
+.react b{font-weight:600;color:var(--link)}
+.comments{border-top:1px solid var(--line);padding:8px 12px;color:var(--link);font-weight:500;font-size:14px}
+.poll{margin:4px 0 2px}.poll-title{font-weight:600;margin-bottom:8px}.poll-option{margin:9px 0}
+.poll-label{display:flex;justify-content:space-between;gap:10px;font-size:14px}
+.poll-label b{white-space:nowrap;color:var(--muted);font-size:12px;font-weight:500}
+.poll-track{height:6px;background:var(--line);border-radius:99px;overflow:hidden;margin-top:4px}
+.poll-track i{display:block;height:100%;background:var(--link);border-radius:99px}
+.poll-total{font-size:12px;color:var(--muted);margin-top:8px}
+@@THEME_CSS@@
+@media print{
+.header{position:static}
+.message{break-inside:avoid}
+}
+</style>
+</head>
+<body>
+<header class="header">
+<div class="hbar"><div class="avatar">@@INITIAL@@</div>
+<div class="htext"><h1>@@TITLE@@</h1><p>@@COUNT@@</p></div>
+<div class="jump"><button type="button" id="jtop" title="В начало" aria-label="В начало">↑</button><button type="button" id="jbot" title="В конец" aria-label="В конец">↓</button></div></div>
+@@DESCRIPTION@@
+@@PINBAR@@
+</header>
+<main class="content">
+@@MESSAGES@@
+</main>
+<div id="toast"></div>
+<script>(function(){var tm;function toast(m){var t=document.getElementById("toast");t.textContent=m;t.classList.add("show");clearTimeout(tm);tm=setTimeout(function(){t.classList.remove("show")},1800)}
+document.getElementById("jtop").addEventListener("click",function(){window.scrollTo({top:0,behavior:"smooth"})});
+document.getElementById("jbot").addEventListener("click",function(){window.scrollTo({top:document.documentElement.scrollHeight,behavior:"smooth"})});
+document.addEventListener("click",function(e){var n=e.target.closest&&e.target.closest(".fwd-name");if(!n)return;var v=n.getAttribute("data-copy");
+function ok(){toast("Скопировано: "+v)}
+function fb(){var a=document.createElement("textarea");a.value=v;a.style.cssText="position:fixed;opacity:0";document.body.appendChild(a);a.select();try{document.execCommand("copy");ok()}catch(x){toast("Не удалось скопировать")}document.body.removeChild(a)}
+if(navigator.clipboard&&window.isSecureContext){navigator.clipboard.writeText(v).then(ok,fb)}else{fb()}})})();</script>
+<script>(function(){var b=document.querySelector(".pinbar");if(!b)return;var pins=JSON.parse(b.getAttribute("data-pins")),i=0,t=b.querySelector(".pin-title"),s=b.querySelector(".pin-snip");function show(){t.textContent=pins.length>1?"Закреплённое сообщение #"+(i+1)+" из "+pins.length:"Закреплённое сообщение";s.textContent=pins[i].t}
+b.addEventListener("click",function(){var e=document.getElementById("m-"+pins[i].id);if(e){var m=e.closest(".message")||e;m.scrollIntoView({behavior:"smooth",block:"center"});m.classList.remove("flash");void m.offsetWidth;m.classList.add("flash")}i=(i+1)%pins.length;show()});show()})();</script>
+</body>
+</html>"""
+        self._stats = {"ok": downloaded, "fail": failed}
+
+        by_id = {}
+        for m in messages:
+            try:
+                by_id[int(m.id)] = m
+            except Exception:
+                pass
+        pins = []
+        for pid in (pinned_ids or []):
+            m = by_id.get(int(pid))
+            if m is None:
+                continue
+            t = " ".join(str(getattr(m, "message", "") or "").split())
+            if not t:
+                if _attr(_attr(m, "media"), "poll") is not None:
+                    t = "📊 Опрос"
+                else:
+                    t = {"image": "🖼 Фото", "video": "🎬 Видео", "audio": "🎵 Аудио",
+                         "file": "📎 Файл"}.get(_kind_for_message(m), "Сообщение")
+            pins.append({"id": int(pid), "t": t[:140]})
+        pin_html = ""
+        if pins:
+            pin_html = ('<div class="pinbar" data-pins="%s"><div class="pin-line"></div>'
+                        '<div class="pin-txt"><div class="pin-title"></div><div class="pin-snip"></div></div>'
+                        '<div class="pin-ico">📌</div></div>') % escape(json.dumps(pins, ensure_ascii=False), quote=True)
+
+        count_text = "%d %s" % (post_count[0], _plural(post_count[0], ("публикация", "публикации", "публикаций")))
+        if subscribers is not None:
+            try:
+                n = int(subscribers)
+                count_text = "%s %s • %s" % (
+                    "{:,}".format(n).replace(",", "\u00a0"),
+                    _plural(n, ("подписчик", "подписчика", "подписчиков")), count_text)
+            except Exception:
+                pass
+        description_html = ('<details class="description"><summary>О канале</summary><div class="description-body">%s</div></details>' % escape(description)) if description else ""
+        return (template.replace("@@THEME_CSS@@", self._theme_css())
+                .replace("@@TITLE@@", escape(title))
+                .replace("@@INITIAL@@", ('<img src="%s" alt="">' % escape(avatar_rel, quote=True)) if avatar_rel else escape((title.strip()[:1] or "К").upper()))
+                .replace("@@COUNT@@", escape(count_text))
+                .replace("@@PINBAR@@", pin_html)
+                .replace("@@DESCRIPTION@@", description_html)
+                .replace("@@MESSAGES@@", "\n".join(chunks)))
+
+    # ------------------------------------------------------------------
+    # Media
+    # ------------------------------------------------------------------
+    def _prepare_media(self, message, media_dir, account=0, photo_override=None):
+        """Copy cached media or download it via the account's FileLoader.
+
+        Returns (relative_path, kind) or (None, None) on failure.
+        """
+        try:
+            kind = _kind_for_message(message) or ("image" if photo_override is not None else None)
+            if not kind:
+                return None, None
+            media = _attr(message, "media")
+            document = _attr(media, "document")
+            photo = photo_override if photo_override is not None else _attr(media, "photo")
+            loader = get_file_loader(account)
+            mid = int(message.id)
+
+            # Preferred human-readable name.
+            orig_name = None
+            if document is not None:
+                for attr in _as_list(_attr(document, "attributes", default=None)):
+                    fn = _attr(attr, "file_name")
+                    if fn:
+                        orig_name = _safe_name(str(fn))
+                        break
+
+            size = None
+            if photo is not None and document is None:
+                try:
+                    size = FileLoader.getClosestPhotoSizeWithSize(
+                        photo.sizes, AndroidUtilities.getPhotoSize()
+                    )
+                except Exception as e:
+                    log("Photo size lookup failed for %s: %r" % (mid, e))
+
+            diag = []
+
+            def note(text):
+                diag.append(str(text))
+                log("Media %s: %s" % (mid, text))
+
+            seen_errors = set()
+
+            def path_error(where, e):
+                if where not in seen_errors:
+                    seen_errors.add(where)
+                    note("%s: %r" % (where, e))
+
+            attach_name = None
+            try:
+                attach_name = str(FileLoader.getAttachFileName(document if document is not None else size))
+            except Exception as e:
+                path_error("getAttachFileName", e)
+
+            def candidates():
+                paths = []
+                try:
+                    paths.append(FileLoader.getPathToMessage(message))
+                except Exception as e:
+                    try:
+                        from java import cast
+                        paths.append(FileLoader.getPathToMessage(cast(TLRPC.Message, message)))
+                    except Exception as e2:
+                        path_error("getPathToMessage", e2)
+                for obj in (document, size):
+                    if obj is not None:
+                        try:
+                            paths.append(FileLoader.getPathToAttach(obj))
+                        except Exception as e:
+                            path_error("getPathToAttach", e)
+                        try:
+                            paths.append(FileLoader.getPathToAttach(obj, True))
+                        except Exception as e:
+                            path_error("getPathToAttach(force)", e)
+                # Запасной вариант: ищем файл по его имени в папках Telegram,
+                # не полагаясь на Java-функции вычисления пути.
+                if attach_name:
+                    try:
+                        import file_utils as _fu
+                        for getter in ("get_images_dir", "get_videos_dir", "get_audios_dir",
+                                       "get_documents_dir", "get_cache_dir", "get_files_dir"):
+                            fn = getattr(_fu, getter, None)
+                            if fn is None:
+                                continue
+                            d = fn()
+                            if d:
+                                paths.append(os.path.join(str(d), attach_name))
+                    except Exception as e:
+                        path_error("scan dirs", e)
+                return paths
+
+            def copy_if_ready():
+                for path in candidates():
+                    if not path:
+                        continue
+                    try:
+                        path = str(path)
+                        if not os.path.isfile(path) or os.path.getsize(path) <= 0:
+                            continue
+                        name = orig_name or _safe_name(os.path.basename(path))
+                        if "." not in name:
+                            ext = os.path.splitext(path)[1]
+                            if not ext and document is not None:
+                                ext = mimetypes.guess_extension(
+                                    str(_attr(document, "mime_type", default="") or "")) or ""
+                            name += ext or (".jpg" if kind == "image" else ".bin")
+                        dest_name = "%s_%s" % (mid, name)
+                        dest = os.path.join(media_dir, dest_name)
+                        tmp = dest + ".part"
+                        with open(path, "rb") as src_file, open(tmp, "wb") as out_file:
+                            shutil.copyfileobj(src_file, out_file, 1024 * 1024)
+                        os.replace(tmp, dest)
+                        return "media/" + dest_name, kind
+                    except Exception as copy_error:
+                        log("Media copy failed for %s: %r" % (mid, copy_error))
+                return None
+
+            # 1) Already in Telegram's cache?
+            ready = copy_if_ready()
+            if ready:
+                return ready
+
+            # 2) Ask FileLoader to download it.
+            priority = getattr(FileLoader, "PRIORITY_NORMAL", 1)
+            if document is None and size is None:
+                note("нет ни document, ни размера фото (photo=%s, sizes=%s)" % (
+                    type(photo).__name__ if photo is not None else None,
+                    len(_as_list(_attr(photo, "sizes", default=None))) if photo is not None else None))
+                self._record_error(mid, kind, diag)
+                return None, None
+
+            # Разные родительские объекты: у одних сборок файловая ссылка
+            # обновляется по TLRPC.Message, у других — по MessageObject.
+            parents = [message]
+            try:
+                parents.append(MessageObject(int(account), message, False, False))
+            except Exception as e:
+                note("MessageObject: %r" % (e,))
+            parents.append(None)
+
+            def request_download():
+                for parent in parents:
+                    pname = type(parent).__name__ if parent is not None else "None"
+                    try:
+                        if document is not None:
+                            loader.loadFile(document, parent, priority, 0)
+                        else:
+                            loc = ImageLocation.getForPhoto(size, photo)
+                            loader.loadFile(loc, parent, "jpg", priority, 0)
+                        return True
+                    except Exception as e:
+                        note("loadFile(parent=%s): %r" % (pname, e))
+                return False
+
+            try:
+                load_key = FileLoader.getAttachFileName(document if document is not None else size)
+            except Exception as e:
+                load_key = None
+                note("getAttachFileName: %r" % (e,))
+
+            def is_loading():
+                if not load_key:
+                    return None
+                try:
+                    return bool(loader.isLoadingFile(load_key))
+                except Exception as e:
+                    if not any("isLoadingFile" in d for d in diag):
+                        note("isLoadingFile: %r" % (e,))
+                    return None
+
+            if not request_download():
+                self._record_error(mid, kind, diag)
+                return None, None
+
+            started = time.time()
+            last_active = started
+            retried = False
+            reason = "таймаут"
+            while True:
+                time.sleep(0.4)
+                if self._cancelled():
+                    return None, None
+                ready = copy_if_ready()
+                if ready:
+                    return ready
+                now = time.time()
+                loading = is_loading()
+                if loading:
+                    last_active = now
+                elif loading is None:
+                    if now - started > MAX_MEDIA_WAIT:
+                        reason = "таймаут (статус загрузки недоступен)"
+                        break
+                else:
+                    if now - last_active > MEDIA_START_GRACE:
+                        if not retried:
+                            retried = True
+                            last_active = now
+                            request_download()
+                        else:
+                            reason = "загрузка не стартовала (isLoadingFile=False)"
+                            break
+                if now - last_active > MAX_MEDIA_WAIT or now - started > MEDIA_HARD_LIMIT:
+                    reason = "таймаут без прогресса"
+                    break
+            note(reason)
+            note("имя файла: %s" % attach_name)
+            for p in candidates():
+                try:
+                    ps = str(p)
+                    note("путь %s exists=%s" % (ps, os.path.exists(ps)))
+                except Exception:
+                    pass
+            self._record_error(mid, kind, diag)
+        except Exception as e:
+            log("Media export failed for %s: %r" % (getattr(message, "id", "?"), e))
+            try:
+                self._record_error(getattr(message, "id", "?"), "?", ["исключение: %r" % (e,)])
+            except Exception:
+                pass
+        return None, None
+
+    def _record_error(self, mid, kind, diag):
+        if not hasattr(self, "_errors") or self._errors is None:
+            self._errors = []
+        self._errors.append("#%s (%s): %s" % (mid, kind, " | ".join(diag) or "неизвестная причина"))
+
+    # ------------------------------------------------------------------
+    # Result delivery
+    # ------------------------------------------------------------------
+    def _show_result(self, path, account):
+        stats = getattr(self, "_stats", None) or {}
+
+        def ui():
+            try:
+                fragment = get_last_fragment()
+                activity = fragment.getParentActivity() if fragment else None
+                if not activity:
+                    self._info("Экспорт завершён: %s" % path)
+                    return
+                try:
+                    size_mb = os.path.getsize(path) / 1048576.0
+                except Exception:
+                    size_mb = 0
+                msg = "Файл: %s\nРазмер: %.1f МБ" % (os.path.basename(path), size_mb)
+                if stats.get("ok") or stats.get("fail"):
+                    msg += "\nМедиа сохранено: %d, не удалось: %d" % (stats.get("ok", 0), stats.get("fail", 0))
+                errs = list(getattr(self, "_errors", []) or [])
+                if errs:
+                    msg += "\n\nПричина ошибки:\n" + "\n".join(e[:900] for e in errs[:1])
+                msg += "\n\nФайл лежит во внутренней папке приложения. Отправьте его в «Избранное» или сохраните в «Загрузки». Все экспорты — в настройках плагина → «Менеджер экспортов»."
+
+                b = AlertDialogBuilder(activity)
+                b.set_title("Экспорт завершён")
+                b.set_message(msg)
+
+                def to_saved(d, w):
+                    d.dismiss()
+                    self._send_to_saved(path, account)
+
+                def to_downloads(d, w):
+                    d.dismiss()
+                    self._save_to_downloads(path, activity)
+
+                b.set_positive_button("В Избранное", to_saved)
+                b.set_neutral_button("В Загрузки", to_downloads)
+                b.set_negative_button("Закрыть", lambda d, w: d.dismiss())
+                b.show()
+            except Exception as e:
+                log("Result dialog failed: %r" % (e,))
+                self._info("Экспорт завершён: %s" % path)
+        run_on_ui_thread(ui)
+
+    def _send_to_saved(self, path, account, quiet=False):
+        try:
+            from client_utils import send_document, get_user_config
+            uid = int(get_user_config(account).getClientUserId())
+            caption = os.path.basename(path)
+            try:
+                send_document(uid, path, caption=caption, account=account)
+            except TypeError:
+                send_document(uid, path, caption=caption)
+            if not quiet:
+                self._info("Отправляется в «Избранное»…")
+            return True
+        except Exception as e:
+            log("Send to saved failed: %r" % (e,))
+            if not quiet:
+                self._info("Не удалось отправить: %s" % str(e))
+            return False
+
+    def _save_to_downloads(self, path, activity, quiet=False):
+        name = os.path.basename(path)
+        mime = "application/zip" if name.lower().endswith(".zip") else "text/html"
+        # 1) Telegram's own helper (MediaStore, works with scoped storage).
+        try:
+            from org.telegram.messenger import MediaController
+            try:
+                MediaController.saveFile(path, activity, 2, name, mime)
+            except Exception:
+                MediaController.saveFile(path, activity, 2, name, mime, None)
+            if not quiet:
+                self._info("Сохранено в «Загрузки»: " + name)
+            return True
+        except Exception as e:
+            log("MediaController.saveFile failed: %r" % (e,))
+        # 2) Direct copy to public Downloads.
+        try:
+            from android.os import Environment
+            target_dir = str(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).getAbsolutePath())
+            ensure_dir_exists(target_dir)
+            shutil.copyfile(path, os.path.join(target_dir, name))
+            if not quiet:
+                self._info("Сохранено в «Загрузки»: " + name)
+            return True
+        except Exception as e:
+            log("Direct save failed: %r" % (e,))
+            if not quiet:
+                self._info("Не удалось сохранить в «Загрузки». Используйте «В Избранное».")
+            return False
