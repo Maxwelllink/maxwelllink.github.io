@@ -1,0 +1,1074 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>Тирлисты</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700&family=Unbounded:wght@600;800&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#eceef4; --surface:#ffffff; --surface2:#e3e6ef; --line:#d2d6e2;
+  --text:#171923; --muted:#5b6280; --accent:#4f5df0; --accent-ink:#ffffff;
+  --danger:#d3344a; --cell-bg:#d8dce7; --shadow:0 10px 30px rgba(20,24,50,.16);
+  --label:80px;
+  --display:'Unbounded','Onest',system-ui,sans-serif;
+  --body:'Onest',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+  color-scheme:light;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px);
+  padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#101117; --surface:#1a1c26; --surface2:#262936; --line:#303445;
+    --text:#eceef8; --muted:#9097b2; --accent:#8d9aff; --accent-ink:#0d1030;
+    --danger:#ff7084; --cell-bg:#1f212d; --shadow:0 10px 30px rgba(0,0,0,.5);
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#101117; --surface:#1a1c26; --surface2:#262936; --line:#303445;
+  --text:#eceef8; --muted:#9097b2; --accent:#8d9aff; --accent-ink:#0d1030;
+  --danger:#ff7084; --cell-bg:#1f212d; --shadow:0 10px 30px rgba(0,0,0,.5);
+  color-scheme:dark;
+}
+html{scroll-padding-top:env(safe-area-inset-top,0px);-webkit-text-size-adjust:100%}
+*,*::before,*::after{box-sizing:border-box}
+[hidden]{display:none!important}
+body{
+  margin:0; background:var(--bg); color:var(--text); font-family:var(--body);
+  font-size:16px; line-height:1.4; min-height:100vh;
+  -webkit-tap-highlight-color:transparent;
+}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer;touch-action:manipulation}
+button:focus-visible,input:focus-visible,.cell:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.ic{display:inline-flex;flex:none}
+.muted{color:var(--muted)}
+.screen{max-width:720px;margin:0 auto;min-height:100vh}
+
+/* ---------- shared bits ---------- */
+.hdr{
+  position:sticky; top:env(safe-area-inset-top,0px); z-index:20;
+  display:flex; align-items:center; gap:8px; padding:10px 12px;
+  background:var(--bg); border-bottom:1px solid var(--line);
+}
+.hdr h1{font:600 17px/1.2 var(--display);margin:0;flex:1}
+.icon-btn{
+  width:44px;height:44px;border-radius:14px;display:inline-flex;align-items:center;justify-content:center;
+  flex:none;color:var(--text);
+}
+.icon-btn:active{background:var(--surface2)}
+.icon-btn.danger{color:var(--danger)}
+.btn{
+  min-height:48px;border-radius:14px;border:1px solid var(--line);background:var(--surface2);
+  font-weight:600;font-size:16px;padding:0 18px;display:inline-flex;align-items:center;justify-content:center;gap:8px;
+}
+.btn:active{transform:scale(.98)}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:transparent}
+.btn.danger{color:var(--danger)}
+.btn.block{width:100%}
+.btn[disabled]{opacity:.45;pointer-events:none}
+.field{
+  width:100%;min-height:48px;border-radius:14px;border:1px solid var(--line);background:var(--bg);
+  color:var(--text);font:500 16px var(--body);padding:0 14px;
+}
+.pad{padding:16px}
+
+/* ---------- menu ---------- */
+.hero{padding:28px 20px 8px}
+.stack{display:grid;gap:4px;width:100%;max-width:300px;margin:0 0 26px}
+.stack .r{display:flex;gap:4px}
+.stack .l{
+  width:34px;height:34px;border-radius:8px;display:grid;place-items:center;
+  font:800 13px var(--display);color:#1a1a1a;
+}
+.stack .q{
+  width:34px;height:34px;border-radius:8px;
+  background:color-mix(in srgb,var(--c) 38%,var(--surface2));
+  animation:drop .5s cubic-bezier(.2,.9,.3,1.2) both;animation-delay:var(--d);
+}
+@keyframes drop{from{transform:translateY(-22px) scale(.8);opacity:0}to{transform:none;opacity:1}}
+.hero h1{font:800 38px/1.05 var(--display);margin:0 0 10px;letter-spacing:-.02em}
+.hero p{margin:0;color:var(--muted);max-width:30ch}
+.menu-actions{display:grid;gap:12px;padding:20px}
+.big{
+  display:flex;align-items:center;gap:14px;text-align:left;padding:16px 18px;min-height:76px;
+  background:var(--surface);border:1px solid var(--line);border-radius:22px;
+}
+.big:active{transform:scale(.985)}
+.big .ico{
+  width:44px;height:44px;border-radius:14px;background:var(--surface2);display:grid;place-items:center;flex:none;
+}
+.big b{display:block;font-size:18px;font-weight:700}
+.big small{display:block;color:var(--muted);font-size:14px}
+.big.primary{background:var(--accent);color:var(--accent-ink);border-color:transparent;border-radius:28px 28px 22px 22px}
+.big.primary small{color:inherit;opacity:.8}
+.big.primary .ico{background:rgba(255,255,255,.22)}
+.big .count{
+  margin-left:auto;min-width:32px;height:32px;padding:0 10px;border-radius:16px;background:var(--surface2);
+  display:grid;place-items:center;font-weight:700;font-size:15px;
+}
+
+/* ---------- templates ---------- */
+.tpl-list{display:grid;gap:10px;padding:14px 16px 30px}
+.tpl{display:flex;gap:14px;align-items:center;text-align:left;background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:14px}
+.tpl:active{transform:scale(.985)}
+.tpl .pv{display:grid;gap:3px;width:64px;flex:none}
+.tpl .pv i{display:block;height:10px;border-radius:3px}
+.tpl .pv.empty{height:64px;border:2px dashed var(--line);border-radius:10px;place-items:center;color:var(--muted)}
+.tpl b{display:block;font-size:17px}
+.tpl span.d{display:block;color:var(--muted);font-size:14px}
+
+/* ---------- saved ---------- */
+.saved-list{display:grid;gap:10px;padding:14px 16px 30px}
+.card{display:flex;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:6px 6px 6px 6px}
+.card .main{display:flex;gap:14px;align-items:center;flex:1;min-width:0;text-align:left;padding:8px;border-radius:14px}
+.mini{display:grid;gap:2px;width:104px;flex:none;background:var(--cell-bg);padding:3px;border-radius:8px}
+.mini .mr{display:flex;gap:2px;height:15px;overflow:hidden}
+.mini .ml{width:15px;flex:none;border-radius:2px}
+.mini img{width:15px;height:15px;object-fit:cover;border-radius:2px;flex:none}
+.card .info{display:grid;min-width:0}
+.card .info b{font-size:17px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.card .info span{font-size:14px;color:var(--muted)}
+.empty-state{padding:48px 28px;text-align:center;color:var(--muted);display:grid;gap:16px;justify-items:center}
+.empty-state p{margin:0;max-width:30ch}
+
+/* ---------- editor ---------- */
+#s-editor{--cell:min(88px,calc((100vw - var(--label) - 2px)/4));padding-bottom:150px}
+.hdr .titlebox{flex:1;min-width:0;display:grid}
+.hdr .titlebox input{
+  width:100%;border:0;background:transparent;color:var(--text);font:700 18px var(--body);padding:2px 4px;
+  border-radius:8px;text-overflow:ellipsis;
+}
+.hdr .titlebox input:focus{background:var(--surface2);outline:0}
+.hdr .titlebox small{color:var(--muted);font-size:12.5px;padding:0 4px}
+.hdr .save{min-height:44px;padding:0 14px;border-radius:14px;background:var(--accent);color:var(--accent-ink);font-weight:700;display:inline-flex;align-items:center;gap:6px}
+.placing .hdr .icon-btn,.placing .hdr .save,.placing .hdr input{pointer-events:none;opacity:.45}
+#tiers{margin-top:12px}
+.tier{display:flex;min-height:var(--cell);background:var(--cell-bg);border-bottom:2px solid var(--bg)}
+.tier.over{outline:3px dashed var(--accent);outline-offset:-3px}
+.tier-label{
+  flex:0 0 var(--label);width:var(--label);display:flex;align-items:center;justify-content:center;text-align:center;
+  padding:4px;font-weight:700;line-height:1.12;overflow-wrap:anywhere;
+}
+.tier-label span{display:block;max-width:100%}
+.placing .tier-label{pointer-events:none;opacity:.6}
+.tier-items{flex:1;display:flex;flex-wrap:wrap;align-content:flex-start;min-height:var(--cell)}
+.cell{
+  width:var(--cell);height:var(--cell);flex:none;position:relative;padding:1px;
+  -webkit-touch-callout:none;user-select:none;-webkit-user-select:none;
+}
+.cell img{width:100%;height:100%;object-fit:cover;display:block;border-radius:3px;pointer-events:none;-webkit-user-drag:none;background:var(--surface2)}
+.cell.pending{touch-action:none;cursor:grab;z-index:2}
+.cell.pending::after{
+  content:"";position:absolute;inset:1px;border-radius:4px;border:3px solid var(--accent);
+  box-shadow:0 0 0 2px rgba(255,255,255,.6);animation:pulse 1.1s ease-in-out infinite;pointer-events:none;
+}
+@keyframes pulse{50%{opacity:.45}}
+.cell.dragging{opacity:.3}
+.cell.ghost{position:fixed;left:0;top:0;z-index:150;pointer-events:none;margin:0;filter:drop-shadow(0 10px 14px rgba(0,0,0,.45))}
+.cell.ghost::after{display:none}
+body.dragging{user-select:none;-webkit-user-select:none;overscroll-behavior:none}
+.empty-tiers{margin:24px 16px;padding:28px 20px;border:2px dashed var(--line);border-radius:20px;text-align:center;color:var(--muted);display:grid;gap:14px;justify-items:center}
+.empty-tiers p{margin:0}
+
+.dock{
+  position:fixed;left:0;right:0;bottom:0;z-index:30;background:var(--surface);border-top:1px solid var(--line);
+  padding:10px 14px calc(10px + env(safe-area-inset-bottom,0px));
+}
+.dock .in{max-width:720px;margin:0 auto;display:grid;gap:10px}
+.dock .row{display:flex;gap:10px}
+.dock .row .btn{flex:1}
+.dock .hint{margin:0;text-align:center;color:var(--muted);font-size:14px}
+.badge{min-width:24px;height:24px;border-radius:12px;padding:0 7px;background:rgba(255,255,255,.28);display:inline-grid;place-items:center;font-size:14px}
+.btn:not(.primary) .badge{background:var(--accent);color:var(--accent-ink)}
+
+/* ---------- sheet ---------- */
+.sheet-wrap{position:fixed;inset:0;z-index:100;display:flex;align-items:flex-end;justify-content:center}
+.backdrop{position:absolute;inset:0;background:rgba(4,6,14,.55)}
+.sheet{
+  position:relative;width:100%;max-width:720px;max-height:88vh;max-height:88dvh;background:var(--surface);
+  border-radius:26px 26px 0 0;display:flex;flex-direction:column;box-shadow:var(--shadow);
+  padding-bottom:env(safe-area-inset-bottom,0px);animation:up .22s ease-out;
+}
+@keyframes up{from{transform:translateY(40px);opacity:0}to{transform:none;opacity:1}}
+.grab{width:40px;height:4px;border-radius:2px;background:var(--line);margin:8px auto 0}
+.sheet-head{display:flex;align-items:center;gap:4px;padding:6px 8px 6px 14px}
+.sheet-head h2{font:700 18px var(--body);margin:0;flex:1}
+.sheet-body{overflow:auto;padding:6px 18px 22px;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;display:grid;gap:14px;align-content:start}
+.lbl{font-weight:600;font-size:15px;margin-bottom:-6px}
+.swatches{display:flex;flex-wrap:wrap;gap:10px}
+.sw{width:42px;height:42px;border-radius:50%;border:3px solid transparent;box-shadow:inset 0 0 0 1px rgba(0,0,0,.18)}
+.sw[aria-pressed="true"]{border-color:var(--text)}
+.sw.custom{position:relative;overflow:hidden;background:conic-gradient(#f66,#fc6,#6f6,#6cf,#c6f,#f66)}
+.sw.custom input{position:absolute;inset:-8px;width:60px;height:60px;opacity:0;cursor:pointer}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.pool-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.pool-grid .pc{aspect-ratio:1;border-radius:12px;overflow:hidden;background:var(--cell-bg);position:relative}
+.pool-grid .pc img{width:100%;height:100%;object-fit:cover;display:block}
+.pool-grid .pc:active{transform:scale(.95)}
+.pool-grid .add{border:2px dashed var(--accent);color:var(--accent);background:transparent;display:grid;place-items:center}
+.tier-pick{min-height:52px;border-radius:14px;font-weight:700;padding:0 16px;text-align:left;display:flex;align-items:center;justify-content:space-between;gap:10px;box-shadow:inset 0 0 0 1px rgba(0,0,0,.12)}
+.tier-pick:active{transform:scale(.985)}
+.pick-prev{display:flex;gap:14px;align-items:center}
+.pick-prev img{width:72px;height:72px;border-radius:14px;object-fit:cover;background:var(--cell-bg)}
+.pick-prev p{margin:0}
+.item-prev{width:140px;height:140px;border-radius:20px;object-fit:cover;justify-self:center;background:var(--cell-bg)}
+.seg{display:grid;grid-template-columns:1fr 1fr;background:var(--bg);border-radius:14px;padding:4px;gap:4px}
+.seg button{min-height:42px;border-radius:10px;font-weight:600;color:var(--muted)}
+.seg button[aria-selected="true"]{background:var(--surface);color:var(--text);box-shadow:0 1px 4px rgba(0,0,0,.18)}
+.preview-box{background:var(--cell-bg);border-radius:14px;padding:8px;display:grid;place-items:center}
+.preview-box canvas{display:block;max-width:100%;max-height:34vh;border-radius:6px}
+input[type=range]{width:100%;accent-color:var(--accent);height:32px}
+.chips{display:flex;gap:8px;flex-wrap:wrap}
+.chip{min-height:38px;padding:0 14px;border-radius:19px;border:1px solid var(--line);background:var(--bg);font-weight:600;font-size:15px}
+.chip[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink);border-color:transparent}
+.check{display:flex;align-items:center;gap:12px;min-height:44px;font-weight:500}
+.check input{width:22px;height:22px;accent-color:var(--accent)}
+.note{margin:0;color:var(--muted);font-size:14.5px}
+.row-between{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+
+.toast{
+  position:fixed;left:50%;transform:translateX(-50%);bottom:calc(110px + env(safe-area-inset-bottom,0px));z-index:200;
+  background:var(--text);color:var(--bg);padding:11px 18px;border-radius:22px;font-weight:600;font-size:15px;
+  max-width:calc(100vw - 32px);text-align:center;box-shadow:var(--shadow);
+}
+@media (prefers-reduced-motion: reduce){
+  .stack .q,.sheet{animation:none}
+  .cell.pending::after{animation:none}
+}
+</style>
+</head>
+<body>
+
+<main>
+  <!-- Главное меню -->
+  <section class="screen" data-screen="menu">
+    <div class="hero">
+      <div class="stack" id="hero-stack" aria-hidden="true"></div>
+      <h1>Тирлисты</h1>
+      <p>Расставляйте картинки по уровням. Всё сохраняется само.</p>
+    </div>
+    <div class="menu-actions">
+      <button class="big primary" id="m-new"><span class="ico" data-ic="plus"></span><span><b>Новый тирлист</b><small>Выберите шаблон</small></span></button>
+      <button class="big" id="m-import"><span class="ico" data-ic="upload"></span><span><b>Импортировать</b><small>Открыть файл-архив</small></span></button>
+      <button class="big" id="m-saved"><span class="ico" data-ic="folder"></span><span><b>Сохранённые</b><small>Ваши тирлисты</small></span><span class="count" id="saved-count">0</span></button>
+    </div>
+  </section>
+
+  <!-- Шаблоны -->
+  <section class="screen" data-screen="templates" hidden>
+    <header class="hdr">
+      <button class="icon-btn" data-back aria-label="Назад" data-ic="back"></button>
+      <h1>Выберите шаблон</h1>
+    </header>
+    <div class="tpl-list" id="tpl-list"></div>
+  </section>
+
+  <!-- Сохранённые -->
+  <section class="screen" data-screen="saved" hidden>
+    <header class="hdr">
+      <button class="icon-btn" data-back aria-label="Назад" data-ic="back"></button>
+      <h1>Сохранённые</h1>
+    </header>
+    <div class="saved-list" id="saved-list"></div>
+  </section>
+
+  <!-- Редактор -->
+  <section class="screen" id="s-editor" data-screen="editor" hidden>
+    <header class="hdr">
+      <button class="icon-btn" data-back aria-label="Назад в меню" data-ic="back"></button>
+      <div class="titlebox">
+        <input id="title-input" maxlength="80" placeholder="Название тирлиста" enterkeyhint="done" aria-label="Название тирлиста">
+        <small id="save-state">Автосохранение включено</small>
+      </div>
+      <button class="save" id="btn-save"><span data-ic="download" data-s="20"></span>Сохранить</button>
+    </header>
+    <div id="tiers"></div>
+    <div class="dock">
+      <div class="in">
+        <div class="row" id="dock-normal">
+          <button class="btn" id="btn-add-tier"><span data-ic="plus" data-s="20"></span>Позиция</button>
+          <button class="btn primary" id="btn-images"><span data-ic="image" data-s="20"></span>Картинки<span class="badge" id="pool-count">0</span></button>
+        </div>
+        <div id="dock-placing" hidden>
+          <p class="hint">Перетащите картинку на нужное место</p>
+          <div class="row" style="margin-top:10px">
+            <button class="btn" id="btn-cancel-place">Отмена</button>
+            <button class="btn primary" id="btn-confirm-place"><span data-ic="check" data-s="20"></span>Подтвердить</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- Нижнее окно -->
+<div class="sheet-wrap" id="sheet" hidden>
+  <div class="backdrop" data-close></div>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+    <div class="grab"></div>
+    <div class="sheet-head">
+      <button class="icon-btn" id="sheet-back" aria-label="Назад" data-ic="back" hidden></button>
+      <h2 id="sheet-title"></h2>
+      <button class="icon-btn" data-close aria-label="Закрыть" data-ic="x"></button>
+    </div>
+    <div class="sheet-body" id="sheet-body"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast" hidden role="status"></div>
+<input type="file" id="file-import" accept=".json,application/json" style="position:fixed;left:-9999px;opacity:0" tabindex="-1" aria-hidden="true">
+<input type="file" id="file-img" accept="image/*" multiple style="position:fixed;left:-9999px;opacity:0" tabindex="-1" aria-hidden="true">
+
+<script>
+(() => {
+'use strict';
+
+/* ================= утилиты ================= */
+const $  = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
+const uid = () => Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-4);
+const plural = (n, f) => { const a = Math.abs(n) % 100, b = a % 10; if (a > 10 && a < 20) return f[2]; if (b > 1 && b < 5) return f[1]; if (b === 1) return f[0]; return f[2]; };
+
+function h(tag, props, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(props || {})) {
+    if (v == null || v === false) continue;
+    if (k === 'class') el.className = v;
+    else if (k === 'style') el.style.cssText = v;
+    else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
+    else if (v === true) el.setAttribute(k, '');
+    else el.setAttribute(k, v);
+  }
+  for (const kid of kids.flat()) {
+    if (kid == null || kid === false) continue;
+    el.append(kid.nodeType ? kid : document.createTextNode(kid));
+  }
+  return el;
+}
+
+const PATHS = {
+  back: '<path d="M15 18l-6-6 6-6"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 002 2h6a2 2 0 002-2l1-12M9 7V4h6v3"/>',
+  image: '<rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="10" r="1.6"/><path d="M21 16l-5-5-8 8"/>',
+  download: '<path d="M12 4v11M7 11l5 5 5-5M5 20h14"/>',
+  upload: '<path d="M12 16V5M7 9l5-5 5 5M5 20h14"/>',
+  folder: '<path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/>',
+  check: '<path d="M5 12l5 5 9-10"/>',
+  x: '<path d="M6 6l12 12M18 6L6 18"/>',
+  up: '<path d="M6 15l6-6 6 6"/>',
+  down: '<path d="M6 9l6 6 6-6"/>'
+};
+function ic(name, size = 22) {
+  const s = h('span', { class: 'ic' });
+  s.innerHTML = `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${PATHS[name]}</svg>`;
+  return s;
+}
+function hydrateIcons(root = document) {
+  $$('[data-ic]', root).forEach(el => {
+    if (el.dataset.done) return;
+    el.dataset.done = '1';
+    el.prepend(ic(el.dataset.ic, +(el.dataset.s || 22)));
+  });
+}
+
+function ink(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+  return (0.299 * r + 0.587 * g + 0.114 * b) > 150 ? '#14151c' : '#ffffff';
+}
+const labelSize = name => { const n = (name || '').length; return n <= 2 ? 24 : n <= 5 ? 17 : n <= 8 ? 14 : 12; };
+const fmtDate = ts => new Date(ts).toLocaleString('ru-RU', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
+const safeName = s => (String(s || '').replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '').trim().slice(0, 60)) || 'tierlist';
+
+let toastTimer = 0;
+function toast(msg) {
+  const t = $('#toast');
+  t.textContent = msg; t.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.hidden = true; }, 2300);
+}
+
+/* ================= хранилище (IndexedDB) ================= */
+const DB = {
+  db: null, mem: new Map(),
+  open() {
+    return new Promise(res => {
+      try {
+        const r = indexedDB.open('tierlist-maker', 1);
+        r.onupgradeneeded = () => r.result.createObjectStore('lists', { keyPath: 'id' });
+        r.onsuccess = () => { this.db = r.result; res(); };
+        r.onerror = () => res();
+        r.onblocked = () => res();
+      } catch (e) { res(); }
+    });
+  },
+  tx(mode, fn) {
+    return new Promise((resolve, reject) => {
+      const t = this.db.transaction('lists', mode);
+      const req = fn(t.objectStore('lists'));
+      t.oncomplete = () => resolve(req ? req.result : undefined);
+      t.onerror = t.onabort = () => reject(t.error);
+    });
+  },
+  async all() { if (!this.db) return [...this.mem.values()]; try { return await this.tx('readonly', s => s.getAll()); } catch (e) { return [...this.mem.values()]; } },
+  async put(l) { if (!this.db) { this.mem.set(l.id, l); return; } try { await this.tx('readwrite', s => s.put(l)); } catch (e) { this.mem.set(l.id, l); throw e; } },
+  async del(id) { this.mem.delete(id); if (this.db) { try { await this.tx('readwrite', s => s.delete(id)); } catch (e) {} } }
+};
+
+/* ================= данные ================= */
+const PALETTE = ['#ff7f7f','#ffa97f','#ffcf7f','#ffee7f','#c9f27f','#7fe88f','#7fe8d6','#7fcfff','#7f9fff','#a98fff','#e08fff','#ff8fc8','#d0d0d0','#8a8f9e'];
+const TEMPLATES = [
+  { id: 'empty', name: 'Пустой', desc: 'Без позиций, добавите свои', tiers: [] },
+  { id: 'sf', name: 'Классика S–F', desc: 'Шесть уровней от лучшего к худшему', tiers: [['S','#ff7f7f'],['A','#ffbf7f'],['B','#ffdf7f'],['C','#ffff7f'],['D','#bfff7f'],['F','#7fff7f']] },
+  { id: 'sd', name: 'Короткий S–D', desc: 'Пять уровней', tiers: [['S','#ff7f7f'],['A','#ffbf7f'],['B','#ffdf7f'],['C','#bfff7f'],['D','#7fdfff']] },
+  { id: 'taste', name: 'Впечатления', desc: 'От шедевра до ужаса', tiers: [['Шедевр','#7fe88f'],['Нравится','#c9f27f'],['Нормально','#ffee7f'],['Так себе','#ffa97f'],['Ужас','#ff7f7f']] },
+  { id: 'podium', name: 'Подиум', desc: 'Золото, серебро, бронза и остальные', tiers: [['Золото','#ffd95f'],['Серебро','#d6dbe6'],['Бронза','#d99a6c'],['Прочее','#8a8f9e']] },
+  { id: 'choice', name: 'Беру или нет', desc: 'Три варианта решения', tiers: [['Беру','#7fe88f'],['Подумаю','#ffee7f'],['Пропущу','#ff8f8f']] }
+];
+
+let L = null;          // текущий тирлист
+let placing = null;    // {imgId, tierId, index, origin}
+let dirty = false;
+let saveTimer = 0;
+
+function normalize(l) {
+  l.images = l.images || {};
+  const seen = new Set();
+  l.tiers.forEach(t => { t.items = (t.items || []).filter(id => l.images[id] && !seen.has(id) && seen.add(id)); });
+  l.pool = (l.pool || []).filter(id => l.images[id] && !seen.has(id) && seen.add(id));
+  return l;
+}
+function setStatus(text) { $('#save-state').textContent = text; }
+function touch() {
+  dirty = true; L.updated = Date.now();
+  setStatus('Сохраняется…');
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(flush, 400);
+}
+async function flush() {
+  clearTimeout(saveTimer);
+  if (!L || !dirty) return;
+  dirty = false;
+  try {
+    await DB.put(L);
+    setStatus('Сохранено в ' + new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }));
+  } catch (e) {
+    setStatus('Не удалось сохранить');
+  }
+}
+window.addEventListener('pagehide', flush);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flush(); });
+
+/* ================= навигация ================= */
+let current = 'menu';
+const stack = ['menu'];
+function show(name) {
+  if (current === 'editor' && name !== 'editor') { flush(); placing = null; document.body.classList.remove('placing'); }
+  if (name === 'editor' && !L) name = 'menu';
+  current = name;
+  $$('.screen').forEach(s => { s.hidden = s.dataset.screen !== name; });
+  closeSheet();
+  window.scrollTo(0, 0);
+  if (name === 'menu') refreshMenu();
+  if (name === 'templates') renderTemplates();
+  if (name === 'saved') renderSaved();
+  if (name === 'editor') renderEditor();
+}
+function go(name, replace) {
+  if (replace) stack[stack.length - 1] = name; else stack.push(name);
+  show(name);
+  try { replace ? history.replaceState({ s: name }, '') : history.pushState({ s: name }, ''); } catch (e) {}
+}
+function popNav() { if (stack.length > 1) stack.pop(); show(stack[stack.length - 1]); }
+function goBack() {
+  if (stack.length <= 1) return show('menu');
+  const before = stack.length;
+  try { history.back(); } catch (e) { popNav(); return; }
+  setTimeout(() => { if (stack.length === before) popNav(); }, 250);
+}
+window.addEventListener('popstate', popNav);
+try { history.replaceState({ s: 'menu' }, ''); } catch (e) {}
+$$('[data-back]').forEach(b => b.addEventListener('click', goBack));
+
+/* ================= нижнее окно ================= */
+let sheetKind = '';
+function openSheet(kind, title, body, onBack) {
+  sheetKind = kind;
+  $('#sheet-title').textContent = title;
+  const b = $('#sheet-body'); b.replaceChildren(body);
+  const back = $('#sheet-back');
+  back.hidden = !onBack; back.onclick = onBack || null;
+  $('#sheet').hidden = false;
+  b.scrollTop = 0;
+}
+function closeSheet() { sheetKind = ''; $('#sheet').hidden = true; }
+$$('[data-close]').forEach(el => el.addEventListener('click', closeSheet));
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeSheet(); });
+
+function confirmSheet(title, text, okLabel, onOk) {
+  const body = h('div', { style: 'display:grid;gap:14px' },
+    h('p', { class: 'note', style: 'font-size:16px;color:var(--text)' }, text),
+    h('div', { class: 'two' },
+      h('button', { class: 'btn', onclick: closeSheet }, 'Отмена'),
+      h('button', { class: 'btn danger', onclick: () => { closeSheet(); onOk(); } }, okLabel)));
+  openSheet('confirm', title, body);
+}
+
+/* ================= меню ================= */
+(function buildHero() {
+  const rows = [['S','#ff7f7f',4],['A','#ffbf7f',3],['B','#ffdf7f',3],['C','#bfff7f',2],['D','#7fdfff',1]];
+  const box = $('#hero-stack'); let d = 0;
+  rows.forEach(([n, c, k]) => {
+    const r = h('div', { class: 'r' }, h('div', { class: 'l', style: `background:${c}` }, n));
+    for (let i = 0; i < k; i++) { r.append(h('div', { class: 'q', style: `--c:${c};--d:${(d += 70)}ms` })); }
+    box.append(r);
+  });
+})();
+async function refreshMenu() {
+  const n = (await DB.all()).length;
+  $('#saved-count').textContent = n;
+}
+$('#m-new').addEventListener('click', () => go('templates'));
+$('#m-saved').addEventListener('click', () => go('saved'));
+$('#m-import').addEventListener('click', () => $('#file-import').click());
+
+/* ================= шаблоны ================= */
+function renderTemplates() {
+  const box = $('#tpl-list'); box.replaceChildren();
+  TEMPLATES.forEach(tp => {
+    const pv = tp.tiers.length
+      ? h('div', { class: 'pv' }, tp.tiers.map(t => h('i', { style: `background:${t[1]}` })))
+      : h('div', { class: 'pv empty' }, ic('plus', 22));
+    box.append(h('button', { class: 'tpl', onclick: () => startFromTemplate(tp) },
+      pv, h('div', {}, h('b', {}, tp.name), h('span', { class: 'd' }, tp.desc))));
+  });
+}
+function startFromTemplate(tp) {
+  L = {
+    id: uid(), title: 'Мой тирлист', updated: Date.now(),
+    tiers: tp.tiers.map(([name, color]) => ({ id: uid(), name, color, items: [] })),
+    pool: [], images: {}
+  };
+  dirty = false; placing = null;
+  go('editor', true);
+}
+
+/* ================= сохранённые ================= */
+function miniPreview(l) {
+  const box = h('div', { class: 'mini' });
+  l.tiers.slice(0, 5).forEach(t => {
+    const row = h('div', { class: 'mr' }, h('div', { class: 'ml', style: `background:${t.color}` }));
+    (t.items || []).slice(0, 5).forEach(id => { if (l.images[id]) row.append(h('img', { src: l.images[id], alt: '' })); });
+    box.append(row);
+  });
+  if (!l.tiers.length) box.append(h('div', { class: 'mr' }));
+  return box;
+}
+async function renderSaved() {
+  const box = $('#saved-list'); box.replaceChildren();
+  const lists = (await DB.all()).sort((a, b) => b.updated - a.updated);
+  if (!lists.length) {
+    box.append(h('div', { class: 'empty-state' },
+      h('p', {}, 'Пока нет ни одного тирлиста. Созданные и импортированные появятся здесь сами.'),
+      h('button', { class: 'btn primary', onclick: () => go('templates', true) }, 'Создать тирлист')));
+    return;
+  }
+  lists.forEach(l => {
+    const imgs = l.tiers.reduce((a, t) => a + (t.items || []).length, 0) + (l.pool || []).length;
+    box.append(h('div', { class: 'card' },
+      h('button', { class: 'main', onclick: () => openList(l) },
+        miniPreview(l),
+        h('div', { class: 'info' },
+          h('b', {}, l.title || 'Без названия'),
+          h('span', {}, `${l.tiers.length} ${plural(l.tiers.length, ['позиция', 'позиции', 'позиций'])}`),
+          h('span', {}, `${imgs} ${plural(imgs, ['картинка', 'картинки', 'картинок'])}`),
+          h('span', {}, fmtDate(l.updated)))),
+      h('button', { class: 'icon-btn danger', 'aria-label': 'Удалить тирлист', onclick: () => {
+        confirmSheet('Удалить тирлист?', `«${l.title || 'Без названия'}» будет удалён без возможности восстановления. Если нужна копия, сначала сохраните архив.`, 'Удалить', async () => { await DB.del(l.id); renderSaved(); toast('Тирлист удалён'); });
+      } }, ic('trash'))));
+  });
+}
+function openList(l) { L = normalize(l); dirty = false; placing = null; go('editor'); }
+
+/* ================= импорт ================= */
+function parseArchive(o) {
+  if (!o || typeof o !== 'object' || !Array.isArray(o.tiers) || !o.images || typeof o.images !== 'object') throw new Error('bad');
+  const images = Object.create(null);
+  for (const [k, v] of Object.entries(o.images)) {
+    if (typeof v === 'string' && /^data:image\/(png|jpe?g|webp|gif);base64,/i.test(v)) images[String(k).slice(0, 40)] = v;
+  }
+  const used = new Set();
+  const take = id => typeof id === 'string' && images[id] && !used.has(id) && (used.add(id), true);
+  const tiers = o.tiers.slice(0, 100).map(t => ({
+    id: uid(),
+    name: String((t && t.name) || '').slice(0, 40),
+    color: /^#[0-9a-f]{6}$/i.test(t && t.color) ? t.color : '#d0d0d0',
+    items: (Array.isArray(t && t.items) ? t.items : []).filter(take)
+  }));
+  const pool = (Array.isArray(o.pool) ? o.pool : []).filter(take);
+  Object.keys(images).forEach(id => { if (!used.has(id)) pool.push(id); });
+  return { id: uid(), title: String(o.title || 'Импортированный тирлист').slice(0, 80), updated: Date.now(), tiers, pool, images: Object.assign({}, images) };
+}
+$('#file-import').addEventListener('change', async e => {
+  const f = e.target.files && e.target.files[0];
+  e.target.value = '';
+  if (!f) return;
+  try {
+    const l = parseArchive(JSON.parse(await f.text()));
+    await DB.put(l);
+    L = l; dirty = false; placing = null;
+    toast('Тирлист импортирован');
+    go('editor');
+  } catch (err) {
+    toast('Не получилось открыть файл. Выберите архив тирлиста (.json)');
+  }
+});
+
+/* ================= редактор ================= */
+function renderEditor() {
+  $('#title-input').value = L.title || '';
+  setStatus('Автосохранение включено');
+  renderTiers(); updateDock();
+}
+function updateDock() {
+  const n = L ? L.pool.length : 0;
+  $('#pool-count').textContent = n;
+  $('#dock-normal').hidden = !!placing;
+  $('#dock-placing').hidden = !placing;
+  document.body.classList.toggle('placing', !!placing);
+}
+function cellEl(id) {
+  return h('div', { class: 'cell', 'data-img': id, role: 'button', tabindex: '0', 'aria-label': 'Картинка' },
+    h('img', { src: L.images[id], alt: '', draggable: 'false' }));
+}
+function renderTiers() {
+  const box = $('#tiers'); box.replaceChildren();
+  if (!L.tiers.length) {
+    box.append(h('div', { class: 'empty-tiers' },
+      h('p', {}, 'Позиций пока нет. Добавьте первую, например «S» или «Лучшее».'),
+      h('button', { class: 'btn primary', onclick: addTier }, ic('plus', 20), 'Добавить позицию')));
+    return;
+  }
+  L.tiers.forEach(t => {
+    const cont = h('div', { class: 'tier-items', 'data-tier': t.id });
+    t.items.forEach(id => { if (placing && placing.origin && placing.imgId === id) return; if (L.images[id]) cont.append(cellEl(id)); });
+    if (placing && placing.tierId === t.id) {
+      const pend = h('div', { class: 'cell pending' }, h('img', { src: L.images[placing.imgId], alt: '', draggable: 'false' }));
+      pend.addEventListener('pointerdown', onPendingDown);
+      cont.insertBefore(pend, cont.children[Math.min(placing.index, cont.children.length)] || null);
+    }
+    box.append(h('div', { class: 'tier', 'data-id': t.id },
+      h('button', { class: 'tier-label', 'data-edit': t.id, style: `background:${t.color};color:${ink(t.color)};font-size:${labelSize(t.name)}px`, 'aria-label': 'Изменить позицию ' + t.name },
+        h('span', {}, t.name || '—')),
+      cont));
+  });
+  const pend = $('.pending', box);
+  if (pend && !drag) setTimeout(() => pend.scrollIntoView({ block: 'center', behavior: 'smooth' }), 30);
+}
+$('#tiers').addEventListener('click', e => {
+  if (placing) return;
+  const lab = e.target.closest('.tier-label');
+  if (lab) return openTierSheet(lab.dataset.edit);
+  const c = e.target.closest('.cell');
+  if (c) openItemSheet(c.dataset.img, c.closest('.tier-items').dataset.tier);
+});
+$('#tiers').addEventListener('keydown', e => {
+  if ((e.key === 'Enter' || e.key === ' ') && e.target.classList.contains('cell') && !placing) { e.preventDefault(); e.target.click(); }
+});
+document.addEventListener('contextmenu', e => { if (e.target.closest('.cell')) e.preventDefault(); });
+
+$('#title-input').addEventListener('input', e => { L.title = e.target.value; touch(); });
+$('#title-input').addEventListener('keydown', e => { if (e.key === 'Enter') e.target.blur(); });
+$('#btn-add-tier').addEventListener('click', addTier);
+$('#btn-images').addEventListener('click', openPoolSheet);
+$('#btn-save').addEventListener('click', openExportSheet);
+
+/* ---- позиции ---- */
+function addTier() {
+  const t = { id: uid(), name: 'Новая', color: PALETTE[L.tiers.length % PALETTE.length], items: [] };
+  L.tiers.push(t); touch(); renderTiers();
+  openTierSheet(t.id, true);
+}
+function openTierSheet(tid, isNew) {
+  const t = L.tiers.find(x => x.id === tid); if (!t) return;
+  const name = h('input', { class: 'field', value: t.name, maxlength: '40', placeholder: 'Название позиции', enterkeyhint: 'done', 'aria-label': 'Название позиции' });
+  name.addEventListener('input', () => { t.name = name.value; touch(); renderTiers(); });
+  name.addEventListener('keydown', e => { if (e.key === 'Enter') name.blur(); });
+
+  const sw = h('div', { class: 'swatches' });
+  const refreshSw = () => $$('.sw[data-c]', sw).forEach(b => b.setAttribute('aria-pressed', String(b.dataset.c.toLowerCase() === t.color.toLowerCase())));
+  const setColor = c => { t.color = c; touch(); renderTiers(); refreshSw(); };
+  PALETTE.forEach(c => sw.append(h('button', { class: 'sw', 'data-c': c, style: `background:${c}`, 'aria-label': 'Цвет ' + c, onclick: () => setColor(c) })));
+  const picker = h('input', { type: 'color', value: t.color, 'aria-label': 'Свой цвет' });
+  picker.addEventListener('input', () => setColor(picker.value));
+  sw.append(h('div', { class: 'sw custom', title: 'Свой цвет' }, picker));
+  refreshSw();
+
+  const idx = () => L.tiers.indexOf(t);
+  const up = h('button', { class: 'btn', onclick: () => move(-1) }, ic('up', 20), 'Выше');
+  const dn = h('button', { class: 'btn', onclick: () => move(1) }, ic('down', 20), 'Ниже');
+  const syncMove = () => { up.disabled = idx() === 0; dn.disabled = idx() === L.tiers.length - 1; };
+  function move(d) { const i = idx(), j = i + d; if (j < 0 || j >= L.tiers.length) return; L.tiers.splice(i, 1); L.tiers.splice(j, 0, t); touch(); renderTiers(); syncMove(); }
+  syncMove();
+
+  let armed = false, armTimer = 0;
+  const del = h('button', { class: 'btn danger block' }, ic('trash', 20), 'Удалить позицию');
+  del.addEventListener('click', () => {
+    if (!armed) {
+      armed = true; del.lastChild.textContent = 'Нажмите ещё раз для удаления';
+      armTimer = setTimeout(() => { armed = false; del.lastChild.textContent = 'Удалить позицию'; }, 3000);
+      return;
+    }
+    clearTimeout(armTimer);
+    const back = t.items.length;
+    L.pool.push(...t.items);
+    L.tiers.splice(idx(), 1);
+    touch(); renderTiers(); updateDock(); closeSheet();
+    toast(back ? 'Позиция удалена, картинки вернулись в «Картинки»' : 'Позиция удалена');
+  });
+
+  const body = h('div', { style: 'display:grid;gap:16px' },
+    name, h('div', { class: 'lbl' }, 'Цвет'), sw, h('div', { class: 'two' }, up, dn), del);
+  openSheet('tier', isNew ? 'Новая позиция' : 'Изменить позицию', body);
+  if (isNew) setTimeout(() => { name.focus(); name.select(); }, 60);
+}
+
+/* ---- картинка внутри позиции ---- */
+function openItemSheet(imgId, tid) {
+  const t = L.tiers.find(x => x.id === tid); if (!t || !L.images[imgId]) return;
+  const body = h('div', { style: 'display:grid;gap:10px' },
+    h('img', { class: 'item-prev', src: L.images[imgId], alt: '' }),
+    h('button', { class: 'btn primary block', onclick: () => { closeSheet(); startPlacing(imgId, tid, tid, t.items.indexOf(imgId)); } }, 'Переместить'),
+    h('button', { class: 'btn block', onclick: () => {
+      t.items = t.items.filter(i => i !== imgId); L.pool.push(imgId);
+      touch(); renderTiers(); updateDock(); closeSheet(); toast('Картинка вернулась в меню');
+    } }, 'Вернуть в меню картинок'),
+    h('button', { class: 'btn danger block', onclick: () => {
+      t.items = t.items.filter(i => i !== imgId); delete L.images[imgId];
+      touch(); renderTiers(); updateDock(); closeSheet(); toast('Картинка удалена');
+    } }, ic('trash', 20), 'Удалить картинку'));
+  openSheet('item', 'Картинка', body);
+}
+
+/* ---- меню картинок ---- */
+function openPoolSheet() {
+  const grid = h('div', { class: 'pool-grid' });
+  grid.append(h('button', { class: 'pc add', 'aria-label': 'Добавить картинки', onclick: () => $('#file-img').click() }, ic('plus', 30)));
+  L.pool.forEach(id => grid.append(h('button', { class: 'pc', 'aria-label': 'Выбрать картинку', onclick: () => openChooser(id) }, h('img', { src: L.images[id], alt: '' }))));
+  const body = h('div', { style: 'display:grid;gap:14px' },
+    h('p', { class: 'note' }, L.pool.length ? 'Нажмите на картинку, затем выберите позицию.' : 'Здесь будут ваши картинки. Нажмите «+», чтобы добавить.'),
+    grid);
+  openSheet('pool', 'Картинки', body);
+}
+function openChooser(imgId) {
+  const list = h('div', { style: 'display:grid;gap:8px' });
+  if (!L.tiers.length) {
+    list.append(h('p', { class: 'note' }, 'Сначала нужна хотя бы одна позиция.'),
+      h('button', { class: 'btn primary', onclick: () => { closeSheet(); addTier(); } }, 'Добавить позицию'));
+  }
+  L.tiers.forEach(t => list.append(h('button', { class: 'tier-pick', style: `background:${t.color};color:${ink(t.color)}`, onclick: () => { closeSheet(); startPlacing(imgId, t.id, null); } },
+    h('span', {}, t.name || '—'), h('span', { style: 'opacity:.7;font-weight:600' }, String(t.items.length)))));
+  const body = h('div', { style: 'display:grid;gap:14px' },
+    h('div', { class: 'pick-prev' }, h('img', { src: L.images[imgId], alt: '' }), h('p', {}, 'Выберите позицию для этой картинки')),
+    list,
+    h('button', { class: 'btn danger block', onclick: () => { L.pool = L.pool.filter(i => i !== imgId); delete L.images[imgId]; touch(); updateDock(); openPoolSheet(); } }, ic('trash', 20), 'Удалить картинку'));
+  openSheet('chooser', 'Позиция', body, openPoolSheet);
+}
+
+/* ---- добавление изображений ---- */
+async function fileToSquare(file, size = 256) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
+    const w = img.naturalWidth, hh = img.naturalHeight, s = Math.min(w, hh);
+    const out = Math.max(1, Math.min(size, s));
+    const c = document.createElement('canvas'); c.width = c.height = out;
+    const ctx = c.getContext('2d');
+    ctx.drawImage(img, (w - s) / 2, (hh - s) / 2, s, s, 0, 0, out, out);
+    let d = c.toDataURL('image/webp', 0.86);
+    if (!d.startsWith('data:image/webp')) {
+      ctx.globalCompositeOperation = 'destination-over'; ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, out, out);
+      d = c.toDataURL('image/jpeg', 0.88);
+    }
+    return d;
+  } finally { URL.revokeObjectURL(url); }
+}
+$('#file-img').addEventListener('change', async e => {
+  const files = Array.from(e.target.files || []);
+  e.target.value = '';
+  if (!files.length || !L) return;
+  toast('Обрабатываю картинки…');
+  let ok = 0, bad = 0;
+  for (const f of files) {
+    try { const d = await fileToSquare(f); const id = uid(); L.images[id] = d; L.pool.push(id); ok++; } catch (err) { bad++; }
+  }
+  if (ok) touch();
+  updateDock();
+  if (sheetKind === 'pool') openPoolSheet();
+  toast(ok ? `Добавлено: ${ok}` + (bad ? `, не открылось: ${bad}` : '') : 'Не удалось открыть выбранные файлы');
+});
+
+/* ---- расстановка ---- */
+function startPlacing(imgId, tierId, origin, index) {
+  placing = { imgId, tierId, index: index == null || index < 0 ? Infinity : index, origin };
+  renderTiers(); updateDock();
+}
+function syncPlacing() {
+  const el = $('#tiers .pending'); if (!el || !placing) return;
+  const cont = el.parentNode;
+  placing.tierId = cont.dataset.tier;
+  placing.index = Array.from(cont.children).indexOf(el);
+}
+$('#btn-cancel-place').addEventListener('click', () => { placing = null; renderTiers(); updateDock(); });
+$('#btn-confirm-place').addEventListener('click', () => {
+  if (!placing) return;
+  syncPlacing();
+  const { imgId, tierId, index, origin } = placing;
+  if (origin) { const ot = L.tiers.find(t => t.id === origin); if (ot) ot.items = ot.items.filter(i => i !== imgId); }
+  L.pool = L.pool.filter(i => i !== imgId);
+  const t = L.tiers.find(x => x.id === tierId);
+  if (t) { t.items = t.items.filter(i => i !== imgId); t.items.splice(Math.min(index, t.items.length), 0, imgId); }
+  placing = null; touch(); renderTiers(); updateDock(); toast('Картинка на месте');
+});
+
+/* ---- перетаскивание ---- */
+let drag = null;
+function moveGhost() {
+  drag.ghost.style.transform = `translate(${drag.x - drag.dx}px, ${drag.y - drag.dy}px) scale(1.15)`;
+}
+function updateTarget() {
+  const { x, y, el } = drag;
+  const tiers = $$('#tiers .tier'); if (!tiers.length) return;
+  let tier = null;
+  for (const t of tiers) { const r = t.getBoundingClientRect(); if (y >= r.top && y <= r.bottom) { tier = t; break; } }
+  if (!tier) {
+    const f = tiers[0].getBoundingClientRect(), l = tiers[tiers.length - 1].getBoundingClientRect();
+    if (y < f.top) tier = tiers[0]; else if (y > l.bottom) tier = tiers[tiers.length - 1]; else return;
+  }
+  tiers.forEach(t => t.classList.toggle('over', t === tier));
+  const cont = $('.tier-items', tier);
+  let before = null;
+  for (const k of cont.children) {
+    if (k === el) continue;
+    const r = k.getBoundingClientRect();
+    if (y < r.top || (y <= r.bottom && x < r.left + r.width / 2)) { before = k; break; }
+  }
+  if (el.parentNode !== cont || el.nextElementSibling !== before) cont.insertBefore(el, before);
+}
+function tick() {
+  if (!drag) return;
+  const top = 120, bottom = window.innerHeight - 170;
+  let dy = 0;
+  if (drag.y < top) dy = -Math.min(18, Math.ceil((top - drag.y) / 5));
+  else if (drag.y > bottom) dy = Math.min(18, Math.ceil((drag.y - bottom) / 5));
+  if (dy) { window.scrollBy(0, dy); updateTarget(); }
+  drag.raf = requestAnimationFrame(tick);
+}
+function onPendingDown(e) {
+  if (!placing || drag) return;
+  if (e.pointerType === 'mouse' && e.button !== 0) return;
+  e.preventDefault();
+  const el = e.currentTarget, r = el.getBoundingClientRect();
+  const ghost = el.cloneNode(true);
+  ghost.classList.remove('pending'); ghost.classList.add('ghost');
+  ghost.style.width = r.width + 'px'; ghost.style.height = r.height + 'px';
+  document.body.append(ghost);
+  drag = { id: e.pointerId, el, ghost, dx: e.clientX - r.left, dy: e.clientY - r.top, x: e.clientX, y: e.clientY, raf: 0 };
+  el.classList.add('dragging');
+  document.body.classList.add('dragging');
+  moveGhost();
+  window.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup', onUp);
+  window.addEventListener('pointercancel', onUp);
+  drag.raf = requestAnimationFrame(tick);
+}
+function onMove(e) {
+  if (!drag || e.pointerId !== drag.id) return;
+  drag.x = e.clientX; drag.y = e.clientY;
+  moveGhost(); updateTarget();
+}
+function onUp(e) {
+  if (!drag || e.pointerId !== drag.id) return;
+  cancelAnimationFrame(drag.raf);
+  drag.ghost.remove(); drag.el.classList.remove('dragging');
+  document.body.classList.remove('dragging');
+  $$('#tiers .tier.over').forEach(t => t.classList.remove('over'));
+  window.removeEventListener('pointermove', onMove);
+  window.removeEventListener('pointerup', onUp);
+  window.removeEventListener('pointercancel', onUp);
+  drag = null;
+  syncPlacing();
+}
+
+/* ================= сохранение файлов ================= */
+const downloadsP = (window.claude && typeof window.claude.use === 'function')
+  ? window.claude.use('downloads').catch(() => null) : Promise.resolve(null);
+
+async function saveFile(filename, data) {
+  const dl = await downloadsP;
+  if (dl) {
+    try { await dl.save({ filename, data }); toast('Файл сохранён'); }
+    catch (e) { if (!e || e.code !== 'declined') toast('Не удалось сохранить файл'); }
+    return;
+  }
+  try {
+    const blob = data instanceof Blob ? data : new Blob([data], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = h('a', { href: url, download: filename });
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    toast('Файл сохранён');
+  } catch (e) { toast('Сохранение недоступно'); }
+}
+
+const FONT = "Onest, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif";
+function wrapLines(ctx, text, maxW) {
+  const out = []; let line = '';
+  for (const word of text.split(/\s+/).filter(Boolean)) {
+    let w = word;
+    while (ctx.measureText(w).width > maxW && w.length > 1) {
+      let k = w.length - 1; while (k > 1 && ctx.measureText(w.slice(0, k)).width > maxW) k--;
+      if (line) { out.push(line); line = ''; }
+      out.push(w.slice(0, k)); w = w.slice(k);
+    }
+    const t = line ? line + ' ' + w : w;
+    if (ctx.measureText(t).width <= maxW) line = t; else { out.push(line); line = w; }
+  }
+  if (line) out.push(line);
+  return out;
+}
+const CELL = 128, LABEL = 150;
+function layoutInfo(list, W, withTitle) {
+  const per = Math.max(1, Math.floor((W - LABEL) / CELL));
+  const rows = list.tiers.map(t => Math.max(1, Math.ceil(t.items.length / per)) * CELL);
+  const titleH = withTitle ? 96 : 0;
+  const H = Math.max(160, titleH + rows.reduce((a, b) => a + b + 3, 0));
+  return { per, rows, titleH, H };
+}
+function drawTierlist(canvas, list, imgs, W, withTitle) {
+  const { per, rows, titleH, H } = layoutInfo(list, W, withTitle);
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#141414'; ctx.fillRect(0, 0, W, H);
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  if (withTitle) {
+    let size = 44; const text = list.title || 'Тирлист';
+    do { ctx.font = `700 ${size}px ${FONT}`; size -= 2; } while (ctx.measureText(text).width > W - 60 && size > 16);
+    ctx.fillStyle = '#ffffff'; ctx.fillText(text, W / 2, titleH / 2 + 2);
+  }
+  let y = titleH;
+  list.tiers.forEach((t, ti) => {
+    const rh = rows[ti];
+    ctx.fillStyle = t.color; ctx.fillRect(0, y, LABEL, rh);
+    ctx.fillStyle = '#1e1e1e'; ctx.fillRect(LABEL, y, W - LABEL, rh);
+    t.items.forEach((id, i) => {
+      const img = imgs[id]; if (!img) return;
+      const x = LABEL + (i % per) * CELL, yy = y + Math.floor(i / per) * CELL;
+      ctx.drawImage(img, x + 1, yy + 1, CELL - 2, CELL - 2);
+    });
+    // подпись
+    const name = t.name || '';
+    let size = 34, lines = [];
+    for (; size >= 13; size -= 2) {
+      ctx.font = `700 ${size}px ${FONT}`;
+      lines = wrapLines(ctx, name, LABEL - 22);
+      if (lines.length * size * 1.15 <= Math.min(rh, 4 * CELL) - 18 && lines.every(l => ctx.measureText(l).width <= LABEL - 22)) break;
+    }
+    ctx.fillStyle = ink(t.color);
+    const lh = size * 1.15, y0 = y + rh / 2 - (lines.length - 1) * lh / 2;
+    lines.forEach((l, i) => ctx.fillText(l, LABEL / 2, y0 + i * lh));
+    y += rh;
+    ctx.fillStyle = '#000'; ctx.fillRect(0, y, W, 3); y += 3;
+  });
+  if (!list.tiers.length) {
+    ctx.fillStyle = '#888'; ctx.font = `500 26px ${FONT}`; ctx.fillText('Нет позиций', W / 2, titleH + 70);
+  }
+}
+async function loadImgMap(list) {
+  const map = {};
+  const ids = [];
+  list.tiers.forEach(t => t.items.forEach(id => ids.push(id)));
+  await Promise.all(ids.map(id => new Promise(res => {
+    const i = new Image(); i.onload = () => { map[id] = i; res(); }; i.onerror = res; i.src = list.images[id];
+  })));
+  return map;
+}
+
+function openExportSheet() {
+  flush();
+  let tab = 'img', W = 800, withTitle = true, imgs = {}, raf = 0;
+  const wrap = h('div', { style: 'display:grid;gap:14px' });
+  const bImg = h('button', { role: 'tab', onclick: () => setTab('img') }, 'Картинка');
+  const bArc = h('button', { role: 'tab', onclick: () => setTab('arc') }, 'Архив');
+  const seg = h('div', { class: 'seg', role: 'tablist' }, bImg, bArc);
+  const panel = h('div', { style: 'display:grid;gap:14px' });
+  wrap.append(seg, panel);
+
+  const canvas = h('canvas', {});
+  const info = h('p', { class: 'note' });
+  const valLabel = h('b', {});
+  const range = h('input', { type: 'range', min: '420', max: '2400', step: '10', value: String(W), 'aria-label': 'Ширина строки' });
+  const chips = h('div', { class: 'chips' });
+  [600, 800, 1200, 1600].forEach(v => chips.append(h('button', { class: 'chip', 'data-v': v, onclick: () => { W = v; range.value = v; draw(); } }, String(v))));
+  const titleCb = h('input', { type: 'checkbox', checked: true });
+  titleCb.addEventListener('change', () => { withTitle = titleCb.checked; draw(); });
+  const saveImg = h('button', { class: 'btn primary block', onclick: () => {
+    const name = safeName(L.title) + '.png';
+    canvas.toBlob(b => { if (b) saveFile(name, b); else toast('Не удалось создать картинку'); }, 'image/png');
+  } }, ic('download', 20), 'Сохранить картинку');
+
+  function draw() {
+    cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(() => {
+      drawTierlist(canvas, L, imgs, W, withTitle);
+      const li = layoutInfo(L, W, withTitle);
+      valLabel.textContent = W + ' px';
+      info.textContent = `В строке помещается картинок: ${li.per}. Размер файла: ${W} × ${li.H} px.`;
+      $$('.chip', chips).forEach(c => c.setAttribute('aria-pressed', String(+c.dataset.v === W)));
+    });
+  }
+  range.addEventListener('input', () => { W = +range.value; draw(); });
+
+  const imgPanel = [
+    h('div', { class: 'preview-box' }, canvas),
+    h('div', { class: 'row-between' }, h('span', { class: 'lbl' }, 'Ширина строки'), valLabel),
+    range, chips, info,
+    h('label', { class: 'check' }, titleCb, 'Название сверху'),
+    saveImg
+  ];
+  const arcPanel = [
+    h('p', { class: 'note', style: 'font-size:16px;color:var(--text)' }, 'Архив хранит всё: позиции, цвета, расстановку и картинки из меню. Его можно открыть позже через «Импортировать» в главном меню.'),
+    h('button', { class: 'btn primary block', onclick: () => {
+      const data = {
+        format: 'tierlist-archive', version: 1, title: L.title || '',
+        tiers: L.tiers.map(t => ({ name: t.name, color: t.color, items: t.items })),
+        pool: L.pool, images: L.images
+      };
+      saveFile(safeName(L.title) + '.tierlist.json', JSON.stringify(data));
+    } }, ic('download', 20), 'Сохранить архив')
+  ];
+  function setTab(t) {
+    tab = t;
+    bImg.setAttribute('aria-selected', String(t === 'img'));
+    bArc.setAttribute('aria-selected', String(t === 'arc'));
+    panel.replaceChildren(...(t === 'img' ? imgPanel : arcPanel));
+    if (t === 'img') draw();
+  }
+  openSheet('export', 'Сохранить', wrap);
+  setTab('img');
+  loadImgMap(L).then(m => { imgs = m; if (sheetKind === 'export' && tab === 'img') draw(); });
+}
+
+/* ================= старт ================= */
+hydrateIcons();
+DB.open().then(() => { show('menu'); });
+})();
+</script>
+</body>
+</html>
